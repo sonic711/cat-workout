@@ -275,13 +275,13 @@ const handleLogout = async () => {
                     row-key="id"
                     class="set-table"
                   >
-                    <el-table-column prop="weight" label="重量" width="80">
+                    <el-table-column prop="weight" label="重量" width="100%">
                       <template #default="{ row }">{{ row.weight }}</template>
                     </el-table-column>
                     <el-table-column prop="unit" label="單位" width="80">
                       <template #default="{ row }">{{ row.unit }}</template>
                     </el-table-column>
-                    <el-table-column prop="reps" label="次數" width="80">
+                    <el-table-column prop="reps" label="次數" width="100%">
                       <template #default="{ row }">{{ row.reps }}</template>
                     </el-table-column>
                     <el-table-column
