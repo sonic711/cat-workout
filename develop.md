@@ -7,7 +7,7 @@
 * **UI 元件庫：** Element Plus
 * **狀態管理：** Pinia
 * **路由管理：** Vue Router
-* **數據儲存：** 採用無需自行開發後端的方式實現數據的永久儲存。應用程式需整合 **SQLite**，以確保訓練紀錄不會因更換裝置或清除快取而遺失。
+* **數據儲存：** 透過 Node/Express + MySQL 永久儲存訓練資料；後端提供 REST API，前端以 fetch 串接，確保換裝置或清除快取時資料仍在。
 
 **核心功能需求：**
 
@@ -42,9 +42,9 @@
 * 新增 `useWorkoutStore`（Pinia）與 `@/types/workout`，定義訓練紀錄資料結構與 SQLite 串接所需的初始方法。
 * 建立 `PersistenceService` 介面與 `createDemoPersistenceService`，再透過 `persistenceProvider` 管理服務實例。
 * Pinia `useWorkoutStore` 改為直接呼叫 `PersistenceService` 進行 hydrate / save / clear，頁面僅需觸發 store 的 `hydrateFromPersistence`。
-* 以 sql.js 建立 `createSqlitePersistenceService`，將資料儲存在瀏覽器 localStorage 的 SQLite 資料庫中，支援 load/save/clear。
-* `persistenceProvider` 預設注入 SQLite persistence（環境不支援時退回 demo service），並補齊 sql.js TypeScript 型別宣告。
-* SQLite persistence 支援 schema 版本檢查與自動重建，偵測到舊欄位時會重設資料並注入示範訓練紀錄以便測試 UI。
+* 以 Express + MySQL 建立 REST API（`server/index.ts`），將資料儲存在資料庫中，支援 load/save/clear 並以 `tenant_id` 分流使用者資料。
+* 新增 `createMysqlPersistenceService`，以 fetch 串接 `/api/*` 端點並依登入帳號帶上 `x-storage-key` header。
+* `persistenceProvider` 預設注入 MySQL persistence（失敗時退回 demo service）。
 * 新增 `WorkoutSessionEditor` 對話框，支援建立 / 編輯 / 刪除指定日期的訓練紀錄，含項目、組數與 inline 新增動作。
 * 首頁詳情面板加入「管理訓練紀錄」入口，無紀錄時可直接建立新資料。
 * 建置 `authStore` 與登入面板，支援帳號 / 密碼驗證；僅輸入帳號為唯讀模式，帳號密碼皆正確（admin/admin、sean/sean）可進入對應帳號的編輯模式。

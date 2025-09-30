@@ -1,6 +1,6 @@
 # cat-workout
 
-This template should help get you started developing with Vue 3 in Vite.
+Cat Workout 是一個使用 Vue 3 + Element Plus 建置的重量訓練日誌。資料透過內建的 Express 後端寫入 MySQL，確保跨裝置仍能保存。
 
 ## Recommended IDE Setup
 
@@ -23,20 +23,39 @@ TypeScript cannot handle type information for `.vue` imports by default, so we r
 
 See [Vite Configuration Reference](https://vite.dev/config/).
 
+## Environment Variables
+
+後端會優先讀取 `MYSQL_URL`（例如 `mysql://user:pass@10.0.0.135:3306/mydatabase?serverTimezone=Asia/Taipei`）。若未設定 URL，請提供下列變數：
+
+```env
+MYSQL_HOST=10.0.0.135
+MYSQL_PORT=3306
+MYSQL_DATABASE=mydatabase
+MYSQL_USER=user
+MYSQL_PASSWORD=userpassword
+```
+
 ## Project Setup
 
 ```sh
 npm install
 ```
 
-### Compile and Hot-Reload for Development
+## Development Workflow
 
 ```sh
 npm run dev
 ```
 
-### Type-Check, Compile and Minify for Production
+`npm run dev` 會同時啟動：
+
+- Vite 前端（預設 5173）
+- Express 後端（預設 5174，透過 `/api` 由 Vite proxy）
+
+## Production Build
 
 ```sh
 npm run build
 ```
+
+若需單獨啟動後端，可使用 `npm run dev:backend`，前端則為 `npm run dev:frontend`。

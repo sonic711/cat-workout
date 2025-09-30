@@ -14,11 +14,12 @@ type LoginPayload = {
 const predefinedUsers: Record<string, { password: string }> = {
   admin: { password: 'admin' },
   sean: { password: 'sean' },
+  shex: { password: 'shex' },
 }
 
 const normalizeUsername = (value: string) => value.trim().toLowerCase()
 
-const storageKeyForUser = (username: string) => `cat-workout.sqlite.${normalizeUsername(username)}`
+const storageKeyForUser = (username: string) => `cat-workout.mysql.${normalizeUsername(username)}`
 
 export const useAuthStore = defineStore('auth', () => {
   const username = ref<string | null>(null)

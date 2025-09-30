@@ -1,27 +1,22 @@
 import { createDemoPersistenceService } from './demoPersistenceService'
-import type { PersistenceOptions, PersistenceService } from './persistenceService'
+import type { PersistenceService } from './persistenceService'
 import {
-  type SqlitePersistenceOptions,
-  createSqlitePersistenceService,
-  isSqlitePersistenceSupported,
-} from './sqlitePersistenceService'
+  type MysqlPersistenceOptions,
+  createMysqlPersistenceService,
+} from './mysqlPersistenceService'
 
 let currentService: PersistenceService | null = null
 let currentKey: string | null = null
 
-type ConfigureOptions = (SqlitePersistenceOptions & PersistenceOptions) | undefined
+type ConfigureOptions = MysqlPersistenceOptions | undefined
 
 const buildService = (options?: ConfigureOptions): PersistenceService => {
-  if (isSqlitePersistenceSupported()) {
-    try {
-      return createSqlitePersistenceService(options)
-    } catch (error) {
-      console.warn('[PersistenceProvider] Falling back to demo service due to SQLite init failure.', error)
-    }
-  } else {
-    console.warn('[PersistenceProvider] SQLite persistence unsupported, using demo service.')
+  try {
+    return createMysqlPersistenceService(options)
+  } catch (error) {
+    console.warn('[PersistenceProvider] Falling back to demo service due to MySQL init failure.', error)
+    return createDemoPersistenceService()
   }
-  return createDemoPersistenceService()
 }
 
 export const configurePersistenceService = (options?: ConfigureOptions) => {
