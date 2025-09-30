@@ -7,6 +7,7 @@ import type {
   DraftWorkoutSession,
   ExerciseDefinition,
   HydrationPayload,
+  UpdateExercisePayload,
   WorkoutSession,
 } from '@/types/workout'
 import { getPersistenceService } from '@/services/persistenceProvider'
@@ -78,6 +79,42 @@ export const useWorkoutStore = defineStore('workout', () => {
 
   const calendarSummaries = computed<CalendarDaySummary[]>(() => Object.values(calendarSummaryByDate.value))
 
+  const exerciseList = computed<ExerciseDefinition[]>(() =>
+    Object.values(exercises.value).sort((a, b) => a.name.localeCompare(b.name, 'zh-Hant', { sensitivity: 'base' })),
+  )
+
+  const exerciseUsage = computed<Record<string, { sessionCount: number; entryCount: number }>>(() => {
+    const usage: Record<string, { sessionCount: number; entryCount: number }> = {}
+    for (const session of Object.values(sessionsByDate.value)) {
+      const countedInSession = new Set<string>()
+      for (const entry of session.entries) {
+        if (!usage[entry.exerciseId]) {
+          usage[entry.exerciseId] = { sessionCount: 0, entryCount: 0 }
+        }
+        const stats = usage[entry.exerciseId]!
+        if (!countedInSession.has(entry.exerciseId)) {
+          stats.sessionCount += 1
+          countedInSession.add(entry.exerciseId)
+        }
+        stats.entryCount += 1
+      }
+    }
+    return usage
+  })
+
+  const exerciseUsageById = computed(
+    () =>
+      (exerciseId: string) =>
+        exerciseUsage.value[exerciseId] ?? { sessionCount: 0, entryCount: 0 },
+  )
+
+  const isNameTaken = (name: string, excludeId?: string) => {
+    const lower = name.toLowerCase()
+    return Object.values(exercises.value).some(
+      (exercise) => exercise.id !== excludeId && exercise.name.toLowerCase() === lower,
+    )
+  }
+
   const registerExercise = (payload: CreateExercisePayload): ExerciseDefinition => {
     ensureCanMutate('新增或更新訓練動作')
     const name = normalizeLabel(payload.name)
@@ -85,25 +122,11 @@ export const useWorkoutStore = defineStore('workout', () => {
       throw new Error('Exercise name is required.')
     }
 
-    const existing = Object.values(exercises.value).find(
-      (exercise) => exercise.name.toLowerCase() === name.toLowerCase(),
-    )
+    if (isNameTaken(name)) {
+      throw new Error('已有相同名稱的訓練動作，請使用其他名稱。')
+    }
 
     const timestamp = nowIso()
-
-    if (existing) {
-      const bodyPart = normalizeLabel(payload.bodyPart)
-      if (bodyPart && bodyPart !== existing.bodyPart) {
-        const updated: ExerciseDefinition = {
-          ...existing,
-          bodyPart,
-          updatedAt: timestamp,
-        }
-        exercises.value[existing.id] = updated
-        return updated
-      }
-      return existing
-    }
 
     const id = generateId()
     const exercise: ExerciseDefinition = {
@@ -116,6 +139,53 @@ export const useWorkoutStore = defineStore('workout', () => {
     exercises.value[id] = exercise
     void persistExercises().catch((error) => handlePersistenceError(error, 'save exercises'))
     return exercise
+  }
+
+  const updateExercise = (payload: UpdateExercisePayload): ExerciseDefinition => {
+    ensureCanMutate('更新訓練動作')
+    const target = exercises.value[payload.id]
+    if (!target) {
+      throw new Error('找不到對應的訓練動作')
+    }
+
+    const name = normalizeLabel(payload.name)
+    if (!name) {
+      throw new Error('Exercise name is required.')
+    }
+
+    if (isNameTaken(name, target.id)) {
+      throw new Error('已有相同名稱的訓練動作，請使用其他名稱。')
+    }
+
+    const bodyPart = normalizeLabel(payload.bodyPart)
+    const timestamp = nowIso()
+
+    const updated: ExerciseDefinition = {
+      ...target,
+      name,
+      bodyPart,
+      updatedAt: timestamp,
+    }
+
+    exercises.value[target.id] = updated
+    void persistExercises().catch((error) => handlePersistenceError(error, 'save exercises'))
+    return updated
+  }
+
+  const removeExercise = (exerciseId: string) => {
+    ensureCanMutate('刪除訓練動作')
+    const target = exercises.value[exerciseId]
+    if (!target) {
+      throw new Error('找不到對應的訓練動作')
+    }
+
+    const usage = exerciseUsageById.value(exerciseId)
+    if (usage.entryCount > 0) {
+      throw new Error('該訓練動作仍有訓練紀錄使用，請先調整訓練內容後再刪除。')
+    }
+
+    delete exercises.value[exerciseId]
+    void persistExercises().catch((error) => handlePersistenceError(error, 'save exercises'))
   }
 
   const upsertSession = (draft: DraftWorkoutSession): WorkoutSession => {
@@ -235,8 +305,13 @@ export const useWorkoutStore = defineStore('workout', () => {
     sessionByDate,
     calendarSummaries,
     calendarSummaryByDate,
+    exerciseList,
+    exerciseUsage,
+    exerciseUsageById,
     // actions
     registerExercise,
+    updateExercise,
+    removeExercise,
     upsertSession,
     removeSession,
     reset,

@@ -59,6 +59,10 @@ export interface CreateExercisePayload {
   bodyPart: string
 }
 
+export interface UpdateExercisePayload extends CreateExercisePayload {
+  id: string
+}
+
 export interface CalendarDaySummary {
   date: string
   hasWorkout: boolean

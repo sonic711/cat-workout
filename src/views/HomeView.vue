@@ -4,6 +4,7 @@ import { storeToRefs } from 'pinia'
 import { ElMessage } from 'element-plus'
 
 import WorkoutSessionEditor from '@/components/workout/WorkoutSessionEditor.vue'
+import ExerciseManager from '@/components/workout/ExerciseManager.vue'
 import { useWorkoutStore } from '@/stores/workoutStore'
 import { useAuthStore } from '@/stores/authStore'
 import type { WorkoutSession } from '@/types/workout'
@@ -14,6 +15,7 @@ const authStore = useAuthStore()
 
 const selectedDate = ref(new Date())
 const isEditorVisible = ref(false)
+const isExerciseManagerVisible = ref(false)
 const loginUsername = ref('')
 const loginPassword = ref('')
 const isLoggingIn = ref(false)
@@ -53,6 +55,14 @@ const openEditor = () => {
 
 const closeEditor = () => {
   isEditorVisible.value = false
+}
+
+const openExerciseManager = () => {
+  if (!authStore.isLoggedIn) {
+    ElMessage.info('請先登入以瀏覽訓練動作清單。')
+    return
+  }
+  isExerciseManagerVisible.value = true
 }
 
 const resetSelection = () => {
@@ -135,7 +145,17 @@ const handleLogout = async () => {
               使用者：<strong>{{ authStore.displayName }}</strong>
               <el-tag size="small" type="info" class="auth-tag">{{ authStore.currentModeLabel }}</el-tag>
             </span>
-            <el-button size="small" type="default" @click="handleLogout">登出</el-button>
+            <div class="auth-actions">
+              <el-button size="small" type="default" @click="handleLogout">登出</el-button>
+              <el-button
+                size="small"
+                type="primary"
+                plain
+                @click="openExerciseManager"
+              >
+                {{ authStore.canEdit ? '管理訓練動作' : '檢視訓練動作' }}
+              </el-button>
+            </div>
           </div>
         </template>
         <template v-else>
@@ -309,6 +329,10 @@ const handleLogout = async () => {
     @saved="closeEditor"
     @deleted="closeEditor"
   />
+  <ExerciseManager
+    v-model="isExerciseManagerVisible"
+    :can-edit="authStore.canEdit"
+  />
 </template>
 
 <style scoped>
@@ -348,6 +372,11 @@ const handleLogout = async () => {
   display: flex;
   align-items: center;
   gap: 0.75rem;
+}
+
+.auth-actions {
+  display: flex;
+  gap: 0.5rem;
 }
 
 .auth-tag {
