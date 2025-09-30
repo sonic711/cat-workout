@@ -1,16 +1,22 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
+import { ElMessage } from 'element-plus'
 
 import WorkoutSessionEditor from '@/components/workout/WorkoutSessionEditor.vue'
 import { useWorkoutStore } from '@/stores/workoutStore'
+import { useAuthStore } from '@/stores/authStore'
 import type { WorkoutSession } from '@/types/workout'
 
 const workoutStore = useWorkoutStore()
 const { calendarSummaryByDate, sessionByDate, sessionDates, exercises } = storeToRefs(workoutStore)
+const authStore = useAuthStore()
 
 const selectedDate = ref(new Date())
 const isEditorVisible = ref(false)
+const loginUsername = ref('')
+const loginPassword = ref('')
+const isLoggingIn = ref(false)
 
 const formatDateKey = (date: Date) => {
   const year = date.getFullYear()
@@ -35,6 +41,10 @@ const getExerciseName = (exerciseId: string) => exercises.value[exerciseId]?.nam
 const getExerciseBodyPart = (exerciseId: string) => exercises.value[exerciseId]?.bodyPart ?? '未分類'
 
 const openEditor = () => {
+  if (!authStore.canEdit) {
+    ElMessage.info('目前為唯讀模式，請輸入帳號與密碼以編輯訓練內容。')
+    return
+  }
   if (!workoutStore.isHydrated) {
     void ensureHydrated()
   }
@@ -43,6 +53,10 @@ const openEditor = () => {
 
 const closeEditor = () => {
   isEditorVisible.value = false
+}
+
+const resetSelection = () => {
+  selectedDate.value = new Date()
 }
 
 const ensureHydrated = async () => {
@@ -61,14 +75,104 @@ const ensureHydrated = async () => {
 }
 
 onMounted(() => {
-  void ensureHydrated()
+  void authStore.initialize().then(() => ensureHydrated())
 })
+
+watch(
+  () => authStore.username,
+  async (value) => {
+    if (value) {
+      resetSelection()
+      await ensureHydrated()
+    }
+  },
+)
+
+const handleLogin = async () => {
+  if (isLoggingIn.value) {
+    return
+  }
+  isLoggingIn.value = true
+  try {
+    const trimmedUsername = loginUsername.value.trim()
+    const success = await authStore.login({
+      username: trimmedUsername,
+      password: loginPassword.value || undefined,
+    })
+    if (success) {
+      loginUsername.value = trimmedUsername
+      loginPassword.value = ''
+      await ensureHydrated()
+      ElMessage.success(
+        authStore.canEdit ? '登入成功，已啟用編輯權限。' : '已切換為唯讀模式，可瀏覽個人訓練紀錄。',
+      )
+    } else if (authStore.lastError) {
+      ElMessage.error(authStore.lastError)
+    }
+  } finally {
+    isLoggingIn.value = false
+  }
+}
+
+const handleLogout = async () => {
+  await authStore.logout()
+  loginPassword.value = ''
+  ElMessage.info('已登出，回到訪客模式。')
+  resetSelection()
+  await ensureHydrated()
+}
 </script>
 
 <template>
   <el-container class="home-layout">
     <el-header class="home-header">
       <h1>健身日誌月曆</h1>
+      <p>快速概覽每一天的訓練安排，並為選定日期管理日誌內容。</p>
+      <div class="auth-panel">
+        <template v-if="authStore.isLoggedIn">
+          <div class="auth-status">
+            <span>
+              使用者：<strong>{{ authStore.displayName }}</strong>
+              <el-tag size="small" type="info" class="auth-tag">{{ authStore.currentModeLabel }}</el-tag>
+            </span>
+            <el-button size="small" type="default" @click="handleLogout">登出</el-button>
+          </div>
+        </template>
+        <template v-else>
+          <el-form class="login-form" inline @submit.prevent="handleLogin">
+            <el-form-item>
+              <el-input
+                v-model="loginUsername"
+                placeholder="帳號"
+                size="small"
+                autocomplete="username"
+              />
+            </el-form-item>
+            <el-form-item>
+              <el-input
+                v-model="loginPassword"
+                type="password"
+                placeholder="密碼 (選填)"
+                size="small"
+                autocomplete="current-password"
+              />
+            </el-form-item>
+            <el-form-item>
+              <el-button
+                type="primary"
+                size="small"
+                :loading="isLoggingIn"
+                @click="handleLogin"
+              >
+                登入
+              </el-button>
+            </el-form-item>
+          </el-form>
+          <p class="login-hint">
+            僅輸入帳號可瀏覽個人紀錄。使用 admin/admin 或 sean/sean 取得編輯權限。
+          </p>
+        </template>
+      </div>
     </el-header>
     <el-main class="home-main">
       <div class="home-content">
@@ -105,7 +209,13 @@ onMounted(() => {
             <template #header>
               <div class="card-header">
                 <span>選取日期：{{ formattedSelectedDate }}</span>
-                <el-button type="primary" plain size="small" @click="openEditor">
+                <el-button
+                  type="primary"
+                  plain
+                  size="small"
+                  :disabled="!authStore.canEdit"
+                  @click="openEditor"
+                >
                   管理訓練紀錄
                 </el-button>
               </div>
@@ -181,7 +291,7 @@ onMounted(() => {
               <p class="next-step-hint">
                 點擊下方按鈕開始為此日期安排訓練內容。
               </p>
-              <el-button type="primary" @click="openEditor">
+              <el-button type="primary" :disabled="!authStore.canEdit" @click="openEditor">
                 建立訓練紀錄
               </el-button>
             </template>
@@ -195,6 +305,7 @@ onMounted(() => {
     v-model="isEditorVisible"
     :date="selectedDateKey"
     :session="sessionForSelectedDate"
+    :can-edit="authStore.canEdit"
     @saved="closeEditor"
     @deleted="closeEditor"
   />
@@ -211,6 +322,7 @@ onMounted(() => {
   flex-direction: column;
   gap: 0.5rem;
   padding: 2.5rem 1.5rem;
+  height: auto !important;
   background: linear-gradient(135deg, #f4f7ff 0%, #dce6ff 100%);
   border-bottom: 1px solid rgba(180, 198, 255, 0.4);
   align-items: center;
@@ -222,6 +334,35 @@ onMounted(() => {
   font-size: clamp(1.6rem, 2vw + 1rem, 2.1rem);
   font-weight: 700;
   color: #1f2933;
+}
+
+.auth-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.auth-status {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.auth-tag {
+  margin-left: 0.5rem;
+}
+
+.login-form {
+  display: flex;
+  align-items: center;
+}
+
+.login-hint {
+  margin: 0;
+  font-size: 0.85rem;
+  color: #4b5563;
 }
 
 .home-header p {

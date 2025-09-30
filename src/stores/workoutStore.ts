@@ -10,6 +10,7 @@ import type {
   WorkoutSession,
 } from '@/types/workout'
 import { getPersistenceService } from '@/services/persistenceProvider'
+import { useAuthStore } from '@/stores/authStore'
 
 const fallbackId = () => `id-${Math.random().toString(36).slice(2, 11)}`
 
@@ -32,6 +33,13 @@ export const useWorkoutStore = defineStore('workout', () => {
 
   const handlePersistenceError = (error: unknown, context: string) => {
     console.error(`[WorkoutStore] Failed to ${context}`, error)
+  }
+
+  const ensureCanMutate = (action: string) => {
+    const authStore = useAuthStore()
+    if (!authStore.canEdit) {
+      throw new Error(`目前僅有瀏覽權限，無法${action}`)
+    }
   }
 
   const persistExercises = async () => {
@@ -71,6 +79,7 @@ export const useWorkoutStore = defineStore('workout', () => {
   const calendarSummaries = computed<CalendarDaySummary[]>(() => Object.values(calendarSummaryByDate.value))
 
   const registerExercise = (payload: CreateExercisePayload): ExerciseDefinition => {
+    ensureCanMutate('新增或更新訓練動作')
     const name = normalizeLabel(payload.name)
     if (!name) {
       throw new Error('Exercise name is required.')
@@ -110,6 +119,7 @@ export const useWorkoutStore = defineStore('workout', () => {
   }
 
   const upsertSession = (draft: DraftWorkoutSession): WorkoutSession => {
+    ensureCanMutate('儲存訓練紀錄')
     const dateKey = normalizeLabel(draft.date)
     if (!dateKey) {
       throw new Error('Session date is required.')
@@ -163,6 +173,7 @@ export const useWorkoutStore = defineStore('workout', () => {
   }
 
   const removeSession = (date: string) => {
+    ensureCanMutate('刪除訓練紀錄')
     const trimmed = normalizeLabel(date)
     if (trimmed in sessionsByDate.value) {
       delete sessionsByDate.value[trimmed]
@@ -170,10 +181,16 @@ export const useWorkoutStore = defineStore('workout', () => {
     }
   }
 
-  const reset = () => {
+  const clearLocalState = () => {
     exercises.value = {}
     sessionsByDate.value = {}
     isHydrated.value = false
+    isHydrating.value = false
+  }
+
+  const reset = () => {
+    ensureCanMutate('清除所有紀錄')
+    clearLocalState()
     void getPersistenceService()
       .clear()
       .catch((error) => handlePersistenceError(error, 'clear persisted data'))
@@ -223,6 +240,7 @@ export const useWorkoutStore = defineStore('workout', () => {
     upsertSession,
     removeSession,
     reset,
+    clearLocalState,
     primeFromStorage,
     hydrateFromPersistence,
   }

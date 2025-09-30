@@ -16,6 +16,7 @@ interface Props {
   modelValue: boolean
   date: string
   session: WorkoutSession | null
+  canEdit: boolean
 }
 
 const props = defineProps<Props>()
@@ -34,6 +35,8 @@ const isVisible = computed({
   get: () => props.modelValue,
   set: (value) => emit('update:modelValue', value),
 })
+
+const isReadOnly = computed(() => !props.canEdit)
 
 const exerciseDialogVisible = ref(false)
 const exerciseDialogTargetEntry = ref<number | null>(null)
@@ -98,26 +101,42 @@ const closeDialog = () => {
   emit('update:modelValue', false)
 }
 
+const guardMutation = (callback: () => void) => {
+  if (isReadOnly.value) {
+    ElMessage.info('目前為唯讀模式，請以完整登入取得編輯權限。')
+    return
+  }
+  callback()
+}
+
 const handleAddEntry = () => {
-  draft.value.entries.push(createEmptyEntry())
+  guardMutation(() => {
+    draft.value.entries.push(createEmptyEntry())
+  })
 }
 
 const handleRemoveEntry = (index: number) => {
-  draft.value.entries.splice(index, 1)
-  if (!draft.value.entries.length) {
-    draft.value.entries.push(createEmptyEntry())
-  }
+  guardMutation(() => {
+    draft.value.entries.splice(index, 1)
+    if (!draft.value.entries.length) {
+      draft.value.entries.push(createEmptyEntry())
+    }
+  })
 }
 
 const handleAddSet = (entry: DraftWorkoutEntry) => {
-  entry.sets.push(createEmptySet())
+  guardMutation(() => {
+    entry.sets.push(createEmptySet())
+  })
 }
 
 const handleRemoveSet = (entry: DraftWorkoutEntry, index: number) => {
-  entry.sets.splice(index, 1)
-  if (!entry.sets.length) {
-    entry.sets.push(createEmptySet())
-  }
+  guardMutation(() => {
+    entry.sets.splice(index, 1)
+    if (!entry.sets.length) {
+      entry.sets.push(createEmptySet())
+    }
+  })
 }
 
 const resetExerciseDialog = () => {
@@ -127,11 +146,20 @@ const resetExerciseDialog = () => {
 }
 
 const openExerciseDialog = (entryIndex: number) => {
+  if (isReadOnly.value) {
+    ElMessage.info('目前為唯讀模式，請以完整登入取得編輯權限。')
+    return
+  }
   exerciseDialogTargetEntry.value = entryIndex
   exerciseDialogVisible.value = true
 }
 
 const handleCreateExercise = () => {
+  if (isReadOnly.value) {
+    ElMessage.info('目前為唯讀模式，請以完整登入取得編輯權限。')
+    return
+  }
+
   const name = newExerciseForm.name.trim()
   const bodyPart = newExerciseForm.bodyPart.trim()
   if (!name) {
@@ -188,6 +216,15 @@ watch(
   },
 )
 
+watch(
+  () => props.canEdit,
+  (value) => {
+    if (!value) {
+      exerciseDialogVisible.value = false
+    }
+  },
+)
+
 const sanitizeDraft = (): DraftWorkoutSession => ({
   id: draft.value.id,
   date: props.date,
@@ -237,18 +274,35 @@ const validateDraft = () => {
 }
 
 const handleSave = () => {
+  if (isReadOnly.value) {
+    ElMessage.info('目前為唯讀模式，請以完整登入取得編輯權限。')
+    return
+  }
   if (!validateDraft()) {
     return
   }
 
-  workoutStore.upsertSession(sanitizeDraft())
-  ElMessage.success('已儲存訓練紀錄')
-  emit('saved')
-  closeDialog()
+  try {
+    workoutStore.upsertSession(sanitizeDraft())
+    ElMessage.success('已儲存訓練紀錄')
+    emit('saved')
+    closeDialog()
+  } catch (error) {
+    if (error instanceof Error) {
+      ElMessage.error(error.message)
+    } else {
+      ElMessage.error('儲存訓練紀錄時發生錯誤')
+    }
+  }
 }
 
 const handleDelete = async () => {
   if (!props.session) {
+    return
+  }
+
+  if (isReadOnly.value) {
+    ElMessage.info('目前為唯讀模式，請以完整登入取得編輯權限。')
     return
   }
 
@@ -262,19 +316,40 @@ const handleDelete = async () => {
     return
   }
 
-  workoutStore.removeSession(props.session.date)
-  ElMessage.success('已刪除訓練紀錄')
-  emit('deleted')
-  closeDialog()
+  try {
+    workoutStore.removeSession(props.session.date)
+    ElMessage.success('已刪除訓練紀錄')
+    emit('deleted')
+    closeDialog()
+  } catch (error) {
+    if (error instanceof Error) {
+      ElMessage.error(error.message)
+    } else {
+      ElMessage.error('刪除訓練紀錄時發生錯誤')
+    }
+  }
 }
 </script>
 
 <template>
   <el-dialog :model-value="isVisible" title="管理訓練紀錄" width="720px" @close="closeDialog">
     <div class="dialog-content">
+      <el-alert
+        v-if="isReadOnly"
+        title="目前為唯讀模式，僅能檢視既有內容。"
+        type="info"
+        show-icon
+        class="readonly-alert"
+      />
       <div class="session-header">
         <span class="session-date">日期：{{ date }}</span>
-        <el-input v-model="draft.note" type="textarea" :rows="2" placeholder="訓練筆記" />
+        <el-input
+          v-model="draft.note"
+          type="textarea"
+          :rows="2"
+          placeholder="訓練筆記"
+          :disabled="isReadOnly"
+        />
       </div>
 
       <div class="entries-section">
@@ -289,6 +364,7 @@ const handleDelete = async () => {
               placeholder="選擇訓練動作"
               filterable
               class="exercise-select"
+              :disabled="isReadOnly"
             >
               <el-option
                 v-for="exercise in exerciseOptions"
@@ -297,10 +373,10 @@ const handleDelete = async () => {
                 :value="exercise.id"
               />
             </el-select>
-            <el-button type="primary" link @click="openExerciseDialog(entryIndex)">
+            <el-button type="primary" link :disabled="isReadOnly" @click="openExerciseDialog(entryIndex)">
               新增動作
             </el-button>
-            <el-button type="danger" link @click="handleRemoveEntry(entryIndex)">
+            <el-button type="danger" link :disabled="isReadOnly" @click="handleRemoveEntry(entryIndex)">
               移除此項目
             </el-button>
           </div>
@@ -311,14 +387,15 @@ const handleDelete = async () => {
             placeholder="項目備註"
             :rows="2"
             class="entry-note"
+            :disabled="isReadOnly"
           />
 
           <el-table :data="entry.sets" size="small" border class="set-table">
             <el-table-column label="重量 (kg/lb)" width="180">
               <template #default="{ row }">
                 <div class="set-weight">
-                  <el-input-number v-model="row.weight" :min="0" :step="0.5" />
-                  <el-select v-model="row.unit" class="unit-select">
+                  <el-input-number v-model="row.weight" :min="0" :step="0.5" :disabled="isReadOnly" />
+                  <el-select v-model="row.unit" class="unit-select" :disabled="isReadOnly">
                     <el-option label="kg" value="kg" />
                     <el-option label="lb" value="lb" />
                   </el-select>
@@ -327,17 +404,17 @@ const handleDelete = async () => {
             </el-table-column>
             <el-table-column label="次數" width="120">
               <template #default="{ row }">
-                <el-input-number v-model="row.reps" :min="1" />
+                <el-input-number v-model="row.reps" :min="1" :disabled="isReadOnly" />
               </template>
             </el-table-column>
             <el-table-column label="備註">
               <template #default="{ row }">
-                <el-input v-model="row.note" placeholder="選填" />
+                <el-input v-model="row.note" placeholder="選填" :disabled="isReadOnly" />
               </template>
             </el-table-column>
             <el-table-column label="操作" width="100">
               <template #default="{ $index }">
-                <el-button type="danger" link @click="handleRemoveSet(entry, $index)">
+                <el-button type="danger" link :disabled="isReadOnly" @click="handleRemoveSet(entry, $index)">
                   移除
                 </el-button>
               </template>
@@ -345,13 +422,13 @@ const handleDelete = async () => {
           </el-table>
 
           <div class="table-actions">
-            <el-button type="primary" plain @click="handleAddSet(entry)">
+            <el-button type="primary" plain :disabled="isReadOnly" @click="handleAddSet(entry)">
               新增組數
             </el-button>
           </div>
         </div>
 
-        <el-button type="primary" plain @click="handleAddEntry">
+        <el-button type="primary" plain :disabled="isReadOnly" @click="handleAddEntry">
           新增訓練項目
         </el-button>
       </div>
@@ -360,8 +437,10 @@ const handleDelete = async () => {
     <template #footer>
       <div class="dialog-footer">
         <el-button @click="closeDialog">取消</el-button>
-        <el-button v-if="session" type="danger" @click="handleDelete">刪除</el-button>
-        <el-button type="primary" @click="handleSave">儲存</el-button>
+        <el-button v-if="session" type="danger" :disabled="isReadOnly" @click="handleDelete">
+          刪除
+        </el-button>
+        <el-button type="primary" :disabled="isReadOnly" @click="handleSave">儲存</el-button>
       </div>
     </template>
   </el-dialog>
@@ -374,17 +453,17 @@ const handleDelete = async () => {
   >
     <el-form label-width="80px" class="exercise-form">
       <el-form-item label="名稱">
-        <el-input v-model="newExerciseForm.name" placeholder="例如：槓鈴臥推" />
+        <el-input v-model="newExerciseForm.name" placeholder="例如：槓鈴臥推" :disabled="isReadOnly" />
       </el-form-item>
       <el-form-item label="部位">
-        <el-input v-model="newExerciseForm.bodyPart" placeholder="例如：胸" />
+        <el-input v-model="newExerciseForm.bodyPart" placeholder="例如：胸" :disabled="isReadOnly" />
       </el-form-item>
     </el-form>
 
     <template #footer>
       <div class="dialog-footer">
         <el-button @click="exerciseDialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="handleCreateExercise">新增</el-button>
+        <el-button type="primary" :disabled="isReadOnly" @click="handleCreateExercise">新增</el-button>
       </div>
     </template>
   </el-dialog>
@@ -395,6 +474,10 @@ const handleDelete = async () => {
   display: flex;
   flex-direction: column;
   gap: 1.5rem;
+}
+
+.readonly-alert {
+  margin-bottom: 0.5rem;
 }
 
 .session-header {
