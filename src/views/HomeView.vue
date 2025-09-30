@@ -3,24 +3,20 @@ import { computed, onMounted, ref } from 'vue'
 import { storeToRefs } from 'pinia'
 
 import { useWorkoutStore } from '@/stores/workoutStore'
-import type { HydrationPayload, WorkoutSession } from '@/types/workout'
+import type { WorkoutSession } from '@/types/workout'
+import { createDemoPersistenceService } from '@/services/demoPersistenceService'
 
 const workoutStore = useWorkoutStore()
 const { calendarSummaryByDate, sessionByDate, exercises } = storeToRefs(workoutStore)
 
 const selectedDate = ref(new Date())
+const persistenceService = createDemoPersistenceService()
 
 const formatDateKey = (date: Date) => {
   const year = date.getFullYear()
   const month = String(date.getMonth() + 1).padStart(2, '0')
   const day = String(date.getDate()).padStart(2, '0')
   return `${year}-${month}-${day}`
-}
-
-const addDays = (date: Date, amount: number) => {
-  const next = new Date(date)
-  next.setDate(date.getDate() + amount)
-  return next
 }
 
 const selectedDateKey = computed(() => formatDateKey(selectedDate.value))
@@ -38,109 +34,31 @@ const entryHasSetNote = (entry: WorkoutEntry) => entry.sets.some((set) => Boolea
 const getExerciseName = (exerciseId: string) => exercises.value[exerciseId]?.name ?? '未命名動作'
 const getExerciseBodyPart = (exerciseId: string) => exercises.value[exerciseId]?.bodyPart ?? '未分類'
 
-const ensureHydrated = () => {
+const ensureHydrated = async () => {
   if (workoutStore.isHydrated) return
 
-  const mockData = createMockHydration()
-  workoutStore.primeFromStorage(mockData)
+  try {
+    const hydration = (await persistenceService.loadHydration()) ?? { exercises: [], sessions: [] }
+    workoutStore.primeFromStorage(hydration)
 
-  const todayKey = formatDateKey(new Date())
-  if (workoutStore.sessionByDate(todayKey)) {
-    selectedDate.value = new Date(`${todayKey}T00:00:00`)
-  }
-}
+    const todayKey = formatDateKey(new Date())
+    if (workoutStore.sessionByDate(todayKey)) {
+      selectedDate.value = new Date(`${todayKey}T00:00:00`)
+      return
+    }
 
-const createMockHydration = (): HydrationPayload => {
-  const now = new Date()
-  const isoNow = now.toISOString()
-
-  const todayKey = formatDateKey(now)
-  const pushKey = formatDateKey(addDays(now, -2))
-  const pullKey = formatDateKey(addDays(now, 3))
-
-  return {
-    exercises: [
-      {
-        id: 'exercise-squat',
-        name: '槓鈴深蹲',
-        bodyPart: '腿',
-        createdAt: isoNow,
-        updatedAt: isoNow,
-      },
-      {
-        id: 'exercise-bench',
-        name: '臥推',
-        bodyPart: '胸',
-        createdAt: isoNow,
-        updatedAt: isoNow,
-      },
-      {
-        id: 'exercise-row',
-        name: '俯身划船',
-        bodyPart: '背',
-        createdAt: isoNow,
-        updatedAt: isoNow,
-      },
-    ],
-    sessions: [
-      {
-        id: `session-${pushKey}`,
-        date: pushKey,
-        note: '推訓—胸肩三頭',
-        entries: [
-          {
-            id: 'entry-bench-1',
-            exerciseId: 'exercise-bench',
-            note: '漸進增加重量',
-            sets: [
-              { id: 'set-bench-1', weight: 60, unit: 'kg', reps: 8 },
-              { id: 'set-bench-2', weight: 70, unit: 'kg', reps: 6 },
-            ],
-          },
-        ],
-        createdAt: isoNow,
-        updatedAt: isoNow,
-      },
-      {
-        id: `session-${todayKey}`,
-        date: todayKey,
-        note: '腿部訓練',
-        entries: [
-          {
-            id: 'entry-squat-1',
-            exerciseId: 'exercise-squat',
-            sets: [
-              { id: 'set-squat-1', weight: 80, unit: 'kg', reps: 8 },
-              { id: 'set-squat-2', weight: 90, unit: 'kg', reps: 6 },
-            ],
-          },
-        ],
-        createdAt: isoNow,
-        updatedAt: isoNow,
-      },
-      {
-        id: `session-${pullKey}`,
-        date: pullKey,
-        note: '拉訓—背與二頭',
-        entries: [
-          {
-            id: 'entry-row-1',
-            exerciseId: 'exercise-row',
-            sets: [
-              { id: 'set-row-1', weight: 40, unit: 'kg', reps: 10 },
-              { id: 'set-row-2', weight: 45, unit: 'kg', reps: 8 },
-            ],
-          },
-        ],
-        createdAt: isoNow,
-        updatedAt: isoNow,
-      },
-    ],
+    const firstSession = hydration.sessions[0]
+    if (firstSession) {
+      selectedDate.value = new Date(`${firstSession.date}T00:00:00`)
+    }
+  } catch (error) {
+    console.error('Failed to hydrate workout data', error)
+    workoutStore.primeFromStorage({ exercises: [], sessions: [] })
   }
 }
 
 onMounted(() => {
-  ensureHydrated()
+  void ensureHydrated()
 })
 </script>
 
