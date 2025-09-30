@@ -45,6 +45,8 @@
 * 以 sql.js 建立 `createSqlitePersistenceService`，將資料儲存在瀏覽器 localStorage 的 SQLite 資料庫中，支援 load/save/clear。
 * `persistenceProvider` 預設注入 SQLite persistence（環境不支援時退回 demo service），並補齊 sql.js TypeScript 型別宣告。
 * SQLite persistence 支援 schema 版本檢查與自動重建，偵測到舊欄位時會重設資料並注入示範訓練紀錄以便測試 UI。
+* 新增 `WorkoutSessionEditor` 對話框，支援建立 / 編輯 / 刪除指定日期的訓練紀錄，含項目、組數與 inline 新增動作。
+* 首頁詳情面板加入「管理訓練紀錄」入口，無紀錄時可直接建立新資料。
 
 **下一步 TODO：**
 
@@ -52,3 +54,4 @@
 * 建立動作管理清單頁或對話框，支援建立新動作與指定身體部位。
 * 擴充錯誤處理與使用者提示（例如 localStorage 空間不足或初始化失敗時的 fallback 流程）。
 * 規劃資料匯入 / 匯出或同步機制，讓使用者可備份或跨裝置轉移紀錄。
+* 補齊單元測試，確保 session 編輯流程與 persistence 互動可靠。

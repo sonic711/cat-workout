@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { storeToRefs } from 'pinia'
 
+import WorkoutSessionEditor from '@/components/workout/WorkoutSessionEditor.vue'
 import { useWorkoutStore } from '@/stores/workoutStore'
 import type { WorkoutSession } from '@/types/workout'
 
@@ -9,6 +10,7 @@ const workoutStore = useWorkoutStore()
 const { calendarSummaryByDate, sessionByDate, sessionDates, exercises } = storeToRefs(workoutStore)
 
 const selectedDate = ref(new Date())
+const isEditorVisible = ref(false)
 
 const formatDateKey = (date: Date) => {
   const year = date.getFullYear()
@@ -31,6 +33,17 @@ const entryHasSetNote = (entry: WorkoutEntry) => entry.sets.some((set) => Boolea
 
 const getExerciseName = (exerciseId: string) => exercises.value[exerciseId]?.name ?? '未命名動作'
 const getExerciseBodyPart = (exerciseId: string) => exercises.value[exerciseId]?.bodyPart ?? '未分類'
+
+const openEditor = () => {
+  if (!workoutStore.isHydrated) {
+    void ensureHydrated()
+  }
+  isEditorVisible.value = true
+}
+
+const closeEditor = () => {
+  isEditorVisible.value = false
+}
 
 const ensureHydrated = async () => {
   const hydration = await workoutStore.hydrateFromPersistence()
@@ -56,7 +69,6 @@ onMounted(() => {
   <el-container class="home-layout">
     <el-header class="home-header">
       <h1>健身日誌月曆</h1>
-      <p>快速概覽每一天的訓練安排，並為選定日期管理日誌內容。</p>
     </el-header>
     <el-main class="home-main">
       <div class="home-content">
@@ -93,6 +105,9 @@ onMounted(() => {
             <template #header>
               <div class="card-header">
                 <span>選取日期：{{ formattedSelectedDate }}</span>
+                <el-button type="primary" plain size="small" @click="openEditor">
+                  管理訓練紀錄
+                </el-button>
               </div>
             </template>
             <template v-if="sessionForSelectedDate">
@@ -164,8 +179,11 @@ onMounted(() => {
                 class="detail-placeholder"
               />
               <p class="next-step-hint">
-                下一步將加入新增 / 編輯訓練紀錄的互動操作與同步儲存。
+                點擊下方按鈕開始為此日期安排訓練內容。
               </p>
+              <el-button type="primary" @click="openEditor">
+                建立訓練紀錄
+              </el-button>
             </template>
           </el-card>
         </el-col>
@@ -173,6 +191,13 @@ onMounted(() => {
       </div>
     </el-main>
   </el-container>
+  <WorkoutSessionEditor
+    v-model="isEditorVisible"
+    :date="selectedDateKey"
+    :session="sessionForSelectedDate"
+    @saved="closeEditor"
+    @deleted="closeEditor"
+  />
 </template>
 
 <style scoped>
