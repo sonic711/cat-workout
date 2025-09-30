@@ -42,10 +42,13 @@
 * 新增 `useWorkoutStore`（Pinia）與 `@/types/workout`，定義訓練紀錄資料結構與 SQLite 串接所需的初始方法。
 * 建立 `PersistenceService` 介面與 `createDemoPersistenceService`，再透過 `persistenceProvider` 管理服務實例。
 * Pinia `useWorkoutStore` 改為直接呼叫 `PersistenceService` 進行 hydrate / save / clear，頁面僅需觸發 store 的 `hydrateFromPersistence`。
+* 以 sql.js 建立 `createSqlitePersistenceService`，將資料儲存在瀏覽器 localStorage 的 SQLite 資料庫中，支援 load/save/clear。
+* `persistenceProvider` 預設注入 SQLite persistence（環境不支援時退回 demo service），並補齊 sql.js TypeScript 型別宣告。
+* SQLite persistence 支援 schema 版本檢查與自動重建，偵測到舊欄位時會重設資料並注入示範訓練紀錄以便測試 UI。
 
 **下一步 TODO：**
 
-* 以 SQLite 或其他本地儲存實作 `PersistenceService`，串接 load/save/clear 並處理同步與錯誤回報。
-* 將 `persistenceProvider` 換成實際的 SQLite service，視需求增加快取/重試機制。
 * 設計新增 / 編輯 / 刪除訓練動作與組數的互動流程，串接 Pinia 與 UI 元件（並呼叫 `PersistenceService` 保存）。
 * 建立動作管理清單頁或對話框，支援建立新動作與指定身體部位。
+* 擴充錯誤處理與使用者提示（例如 localStorage 空間不足或初始化失敗時的 fallback 流程）。
+* 規劃資料匯入 / 匯出或同步機制，讓使用者可備份或跨裝置轉移紀錄。
