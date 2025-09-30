@@ -9,6 +9,7 @@ import type {
   HydrationPayload,
   WorkoutSession,
 } from '@/types/workout'
+import { getPersistenceService } from '@/services/persistenceProvider'
 
 const fallbackId = () => `id-${Math.random().toString(36).slice(2, 11)}`
 
@@ -25,8 +26,23 @@ const nowIso = () => new Date().toISOString()
 
 export const useWorkoutStore = defineStore('workout', () => {
   const isHydrated = ref(false)
+  const isHydrating = ref(false)
   const exercises = ref<Record<string, ExerciseDefinition>>({})
   const sessionsByDate = ref<Record<string, WorkoutSession>>({})
+
+  const handlePersistenceError = (error: unknown, context: string) => {
+    console.error(`[WorkoutStore] Failed to ${context}`, error)
+  }
+
+  const persistExercises = async () => {
+    const service = getPersistenceService()
+    await service.saveExercises(Object.values(exercises.value))
+  }
+
+  const persistSessions = async () => {
+    const service = getPersistenceService()
+    await service.saveSessions(Object.values(sessionsByDate.value))
+  }
 
   const sessionDates = computed(() => Object.keys(sessionsByDate.value).sort())
 
@@ -89,6 +105,7 @@ export const useWorkoutStore = defineStore('workout', () => {
       updatedAt: timestamp,
     }
     exercises.value[id] = exercise
+    void persistExercises().catch((error) => handlePersistenceError(error, 'save exercises'))
     return exercise
   }
 
@@ -140,6 +157,7 @@ export const useWorkoutStore = defineStore('workout', () => {
     }
 
     sessionsByDate.value[dateKey] = session
+    void persistSessions().catch((error) => handlePersistenceError(error, 'save sessions'))
 
     return session
   }
@@ -148,6 +166,7 @@ export const useWorkoutStore = defineStore('workout', () => {
     const trimmed = normalizeLabel(date)
     if (trimmed in sessionsByDate.value) {
       delete sessionsByDate.value[trimmed]
+      void persistSessions().catch((error) => handlePersistenceError(error, 'save sessions'))
     }
   }
 
@@ -155,6 +174,9 @@ export const useWorkoutStore = defineStore('workout', () => {
     exercises.value = {}
     sessionsByDate.value = {}
     isHydrated.value = false
+    void getPersistenceService()
+      .clear()
+      .catch((error) => handlePersistenceError(error, 'clear persisted data'))
   }
 
   const primeFromStorage = (payload: HydrationPayload) => {
@@ -163,9 +185,32 @@ export const useWorkoutStore = defineStore('workout', () => {
     isHydrated.value = true
   }
 
+  const hydrateFromPersistence = async (): Promise<HydrationPayload | null> => {
+    if (isHydrated.value || isHydrating.value) {
+      return null
+    }
+
+    isHydrating.value = true
+
+    try {
+      const service = getPersistenceService()
+      const hydration = (await service.loadHydration()) ?? { exercises: [], sessions: [] }
+      primeFromStorage(hydration)
+      return hydration
+    } catch (error) {
+      handlePersistenceError(error, 'load persisted workouts')
+      const fallback: HydrationPayload = { exercises: [], sessions: [] }
+      primeFromStorage(fallback)
+      return fallback
+    } finally {
+      isHydrating.value = false
+    }
+  }
+
   return {
     // state
     isHydrated,
+    isHydrating,
     exercises,
     sessionsByDate,
     // getters
@@ -179,5 +224,6 @@ export const useWorkoutStore = defineStore('workout', () => {
     removeSession,
     reset,
     primeFromStorage,
+    hydrateFromPersistence,
   }
 })

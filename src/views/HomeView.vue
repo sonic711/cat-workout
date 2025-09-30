@@ -4,13 +4,11 @@ import { storeToRefs } from 'pinia'
 
 import { useWorkoutStore } from '@/stores/workoutStore'
 import type { WorkoutSession } from '@/types/workout'
-import { createDemoPersistenceService } from '@/services/demoPersistenceService'
 
 const workoutStore = useWorkoutStore()
-const { calendarSummaryByDate, sessionByDate, exercises } = storeToRefs(workoutStore)
+const { calendarSummaryByDate, sessionByDate, sessionDates, exercises } = storeToRefs(workoutStore)
 
 const selectedDate = ref(new Date())
-const persistenceService = createDemoPersistenceService()
 
 const formatDateKey = (date: Date) => {
   const year = date.getFullYear()
@@ -35,25 +33,17 @@ const getExerciseName = (exerciseId: string) => exercises.value[exerciseId]?.nam
 const getExerciseBodyPart = (exerciseId: string) => exercises.value[exerciseId]?.bodyPart ?? '未分類'
 
 const ensureHydrated = async () => {
-  if (workoutStore.isHydrated) return
+  const hydration = await workoutStore.hydrateFromPersistence()
 
-  try {
-    const hydration = (await persistenceService.loadHydration()) ?? { exercises: [], sessions: [] }
-    workoutStore.primeFromStorage(hydration)
+  const todayKey = formatDateKey(new Date())
+  if (sessionByDate.value(todayKey)) {
+    selectedDate.value = new Date(`${todayKey}T00:00:00`)
+    return
+  }
 
-    const todayKey = formatDateKey(new Date())
-    if (workoutStore.sessionByDate(todayKey)) {
-      selectedDate.value = new Date(`${todayKey}T00:00:00`)
-      return
-    }
-
-    const firstSession = hydration.sessions[0]
-    if (firstSession) {
-      selectedDate.value = new Date(`${firstSession.date}T00:00:00`)
-    }
-  } catch (error) {
-    console.error('Failed to hydrate workout data', error)
-    workoutStore.primeFromStorage({ exercises: [], sessions: [] })
+  const fallbackDate = hydration?.sessions[0]?.date ?? sessionDates.value[0]
+  if (fallbackDate) {
+    selectedDate.value = new Date(`${fallbackDate}T00:00:00`)
   }
 }
 

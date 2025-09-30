@@ -40,10 +40,12 @@
 * 月曆日期格顯示 `useWorkoutStore` 內的身體部位標籤，暫以示範資料 hydrate（後續會替換為實際儲存機制）。
 * 詳情面板可呈現選定日期的訓練內容、組數表格與部位標籤，資料來源為 Pinia store。
 * 新增 `useWorkoutStore`（Pinia）與 `@/types/workout`，定義訓練紀錄資料結構與 SQLite 串接所需的初始方法。
-* 建立 `PersistenceService` 介面與 `createDemoPersistenceService`，HomeView 透過服務載入示範資料，未來可直接換成 SQLite 實作。
+* 建立 `PersistenceService` 介面與 `createDemoPersistenceService`，再透過 `persistenceProvider` 管理服務實例。
+* Pinia `useWorkoutStore` 改為直接呼叫 `PersistenceService` 進行 hydrate / save / clear，頁面僅需觸發 store 的 `hydrateFromPersistence`。
 
 **下一步 TODO：**
 
 * 以 SQLite 或其他本地儲存實作 `PersistenceService`，串接 load/save/clear 並處理同步與錯誤回報。
+* 將 `persistenceProvider` 換成實際的 SQLite service，視需求增加快取/重試機制。
 * 設計新增 / 編輯 / 刪除訓練動作與組數的互動流程，串接 Pinia 與 UI 元件（並呼叫 `PersistenceService` 保存）。
 * 建立動作管理清單頁或對話框，支援建立新動作與指定身體部位。
