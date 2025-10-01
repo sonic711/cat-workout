@@ -155,11 +155,13 @@ const formatTimestamp = (value: string) => {
   if (!value) {
     return '—'
   }
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) {
-    return value
+  if (value.includes('T')) {
+    const date = new Date(value)
+    if (!Number.isNaN(date.getTime())) {
+      return date.toLocaleString()
+    }
   }
-  return date.toLocaleString()
+  return value
 }
 
 watch(

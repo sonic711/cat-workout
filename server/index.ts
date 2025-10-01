@@ -1,6 +1,13 @@
 import express, { type Request, type Response } from 'express'
 import { createPool, type Pool, type PoolConnection } from 'mysql2/promise'
 
+import {
+  normalizeDateFromDb,
+  normalizeTimestampFromDb,
+  prepareDateForDb,
+  prepareTimestampForDb,
+} from './dateUtils'
+
 interface ExerciseRow {
   id: string
   name: string
@@ -101,7 +108,7 @@ const resolveEnv = (): MysqlConfig => {
   }
 
   return {
-    host: process.env.MYSQL_HOST ?? '10.0.0.135',
+    host: process.env.MYSQL_HOST ?? '152.69.193.219',
     port: Number(process.env.MYSQL_PORT ?? '3306'),
     user: process.env.MYSQL_USER ?? 'user',
     password: process.env.MYSQL_PASSWORD ?? 'userpassword',
@@ -135,17 +142,6 @@ const app = express()
 app.use(express.json({ limit: '1mb' }))
 
 const DEFAULT_TENANT = 'cat-workout.mysql.default'
-
-const toIsoString = (value: Date | string | null): string => {
-  if (!value) {
-    return new Date().toISOString()
-  }
-  if (value instanceof Date) {
-    return value.toISOString()
-  }
-  const parsed = new Date(value)
-  return Number.isNaN(parsed.getTime()) ? new Date().toISOString() : parsed.toISOString()
-}
 
 const sanitizeTenant = (value: string | null | undefined) => {
   if (!value) {
@@ -223,16 +219,16 @@ const mapExerciseRow = (row: ExerciseRow): ExerciseDefinition => ({
   id: row.id,
   name: row.name,
   bodyPart: row.bodyPart,
-  createdAt: toIsoString(row.createdAt),
-  updatedAt: toIsoString(row.updatedAt),
+  createdAt: normalizeTimestampFromDb(row.createdAt, `exercise(${row.id}).createdAt`),
+  updatedAt: normalizeTimestampFromDb(row.updatedAt, `exercise(${row.id}).updatedAt`),
 })
 
 const mapSessionRow = (row: SessionRow): Omit<WorkoutSession, 'entries'> => ({
   id: row.id,
-  date: row.date instanceof Date ? row.date.toISOString().slice(0, 10) : String(row.date),
+  date: normalizeDateFromDb(row.date, `session(${row.id}).date`),
   note: row.note ?? undefined,
-  createdAt: toIsoString(row.createdAt),
-  updatedAt: toIsoString(row.updatedAt),
+  createdAt: normalizeTimestampFromDb(row.createdAt, `session(${row.id}).createdAt`),
+  updatedAt: normalizeTimestampFromDb(row.updatedAt, `session(${row.id}).updatedAt`),
 })
 
 const validateExercises = (payload: unknown): payload is ExerciseDefinition[] => {
@@ -427,8 +423,8 @@ app.put('/api/exercises', async (req: Request, res: Response) => {
             exercise.id,
             exercise.name,
             exercise.bodyPart,
-            new Date(exercise.createdAt),
-            new Date(exercise.updatedAt),
+            prepareTimestampForDb(exercise.createdAt, `exercise(${exercise.id}).createdAt`),
+            prepareTimestampForDb(exercise.updatedAt, `exercise(${exercise.id}).updatedAt`),
           ],
         )
       }
@@ -466,10 +462,10 @@ app.put('/api/sessions', async (req: Request, res: Response) => {
           [
             tenantId,
             session.id,
-            session.date,
+            prepareDateForDb(session.date, `session(${session.id}).date`),
             session.note ?? null,
-            new Date(session.createdAt),
-            new Date(session.updatedAt),
+            prepareTimestampForDb(session.createdAt, `session(${session.id}).createdAt`),
+            prepareTimestampForDb(session.updatedAt, `session(${session.id}).updatedAt`),
           ],
         )
 

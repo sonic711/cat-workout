@@ -14,7 +14,7 @@ type LoginPayload = {
 const predefinedUsers: Record<string, { password: string }> = {
   admin: { password: 'admin' },
   sean: { password: 'sean' },
-  shex: { password: 'shex' },
+  shekx: { password: 'shekx' },
 }
 
 const normalizeUsername = (value: string) => value.trim().toLowerCase()
