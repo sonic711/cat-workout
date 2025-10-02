@@ -11,6 +11,11 @@ type LoginPayload = {
   password?: string
 }
 
+interface PersistedAuthState {
+  username: string
+  mode: AuthMode
+}
+
 const predefinedUsers: Record<string, { password: string }> = {
   admin: { password: 'admin' },
   sean: { password: 'sean' },
@@ -20,6 +25,58 @@ const predefinedUsers: Record<string, { password: string }> = {
 const normalizeUsername = (value: string) => value.trim().toLowerCase()
 
 const storageKeyForUser = (username: string) => `cat-workout.mysql.${normalizeUsername(username)}`
+
+const AUTH_STORAGE_KEY = 'cat-workout.auth.state'
+
+const getLocalStorage = (): Storage | null => {
+  if (typeof window === 'undefined') {
+    return null
+  }
+  try {
+    return window.localStorage
+  } catch {
+    return null
+  }
+}
+
+const readPersistedState = (): PersistedAuthState | null => {
+  const storage = getLocalStorage()
+  if (!storage) {
+    return null
+  }
+  try {
+    const raw = storage.getItem(AUTH_STORAGE_KEY)
+    if (!raw) {
+      return null
+    }
+    const parsed = JSON.parse(raw) as PersistedAuthState | null
+    if (!parsed || typeof parsed.username !== 'string' || typeof parsed.mode !== 'string') {
+      return null
+    }
+    if (!['guest', 'view', 'edit'].includes(parsed.mode)) {
+      return null
+    }
+    return parsed
+  } catch {
+    return null
+  }
+}
+
+const persistState = (state: PersistedAuthState | null) => {
+  const storage = getLocalStorage()
+  if (!storage) {
+    return
+  }
+  try {
+    if (!state) {
+      storage.removeItem(AUTH_STORAGE_KEY)
+      return
+    }
+    storage.setItem(AUTH_STORAGE_KEY, JSON.stringify(state))
+  } catch {
+    // Ignore persistence errors silently
+  }
+}
 
 export const useAuthStore = defineStore('auth', () => {
   const username = ref<string | null>(null)
@@ -77,6 +134,7 @@ export const useAuthStore = defineStore('auth', () => {
     lastError.value = null
 
     await applyPersistenceContext(storageKeyForUser(trimmed))
+    persistState({ username: trimmed, mode: nextMode })
 
     return true
   }
@@ -86,6 +144,7 @@ export const useAuthStore = defineStore('auth', () => {
     mode.value = 'guest'
     lastError.value = null
     await applyPersistenceContext()
+    persistState(null)
   }
 
   const initialize = async () => {
@@ -94,6 +153,17 @@ export const useAuthStore = defineStore('auth', () => {
     }
     isInitializing.value = true
     try {
+      const persisted = readPersistedState()
+      if (persisted) {
+        const normalized = normalizeUsername(persisted.username)
+        if (predefinedUsers[normalized]) {
+          username.value = persisted.username
+          mode.value = persisted.mode
+          await applyPersistenceContext(storageKeyForUser(persisted.username))
+          return
+        }
+        persistState(null)
+      }
       await applyPersistenceContext()
     } finally {
       isInitializing.value = false
