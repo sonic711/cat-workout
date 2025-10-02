@@ -351,7 +351,7 @@ const handleLogout = async () => {
               </div>
               <el-empty
                 v-else
-                description="尚未新增訓練動作"
+                description="尚未新增訓練"
                 class="detail-placeholder"
               />
             </template>

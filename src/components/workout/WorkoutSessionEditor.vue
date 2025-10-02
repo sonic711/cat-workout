@@ -146,17 +146,13 @@ const hydrateDraft = () => {
         return nutritionDraft
       })(),
     }
-    if (!draft.value.entries.length) {
-      draft.value.entries.push(createEmptyEntry())
-    }
   } else {
     draft.value = createEmptyDraft()
-    draft.value.entries.push(createEmptyEntry())
   }
 }
 
 const createEmptyEntry = (): DraftWorkoutEntry => ({
-  exerciseId: exerciseOptions.value[0]?.id ?? '',
+  exerciseId: '',
   note: '',
   sets: [createEmptySet()],
 })
@@ -182,9 +178,6 @@ const handleAddEntry = () => {
 const handleRemoveEntry = (index: number) => {
   guardMutation(() => {
     draft.value.entries.splice(index, 1)
-    if (!draft.value.entries.length) {
-      draft.value.entries.push(createEmptyEntry())
-    }
   })
 }
 
@@ -338,11 +331,6 @@ const sanitizeDraft = (): DraftWorkoutSession => ({
 })
 
 const validateDraft = () => {
-  if (!draft.value.entries.length) {
-    ElMessage.error('請至少新增一個訓練項目')
-    return false
-  }
-
   for (const entry of draft.value.entries) {
     if (!entry.exerciseId) {
       ElMessage.error('請為每個訓練項目選擇動作')
