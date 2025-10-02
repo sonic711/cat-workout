@@ -12,6 +12,7 @@ import type {
   DraftWorkoutSet,
   ExerciseDefinition,
   MealType,
+  WeightUnit,
   WorkoutSession,
 } from '@/types/workout'
 
@@ -56,6 +57,26 @@ const mealLabels: Record<MealType, string> = {
   lunch: '午餐',
   dinner: '晚餐',
 }
+
+const createRange = (start: number, end: number, step: number): number[] => {
+  const values: number[] = []
+  const decimals = Math.max(0, (step.toString().split('.')[1]?.length ?? 0))
+  for (let current = start; current <= end + step / 2; current += step) {
+    values.push(Number(current.toFixed(decimals)))
+  }
+  return values
+}
+
+const weightOptionsByUnit: Record<WeightUnit, number[]> = {
+  kg: createRange(0, 200, 0.5),
+  lb: createRange(0, 440, 1),
+}
+
+const repOptions = Array.from({ length: 50 }, (_, index) => index + 1)
+
+const formatWeightLabel = (value: number): string => (Number.isInteger(value) ? `${value}` : value.toFixed(1))
+
+const getWeightOptions = (unit: WeightUnit): number[] => weightOptionsByUnit[unit]
 
 const createEmptyNutritionDraft = (): DraftDailyNutrition => ({
   waterIntakeMl: 0,
@@ -507,7 +528,20 @@ const handleDelete = async () => {
             <el-table-column label="重量 (kg/lb)" width="180">
               <template #default="{ row }">
                 <div class="set-weight">
-                  <el-input-number v-model="row.weight" :min="0" :step="0.5" :disabled="isReadOnly" />
+                  <el-select
+                    v-model="row.weight"
+                    class="weight-select"
+                    filterable
+                    :disabled="isReadOnly"
+                    placeholder="選擇重量"
+                  >
+                    <el-option
+                      v-for="option in getWeightOptions(row.unit)"
+                      :key="`weight-${row.unit}-${option}`"
+                      :label="formatWeightLabel(option)"
+                      :value="option"
+                    />
+                  </el-select>
                   <el-select v-model="row.unit" class="unit-select" :disabled="isReadOnly">
                     <el-option label="kg" value="kg" />
                     <el-option label="lb" value="lb" />
@@ -517,7 +551,20 @@ const handleDelete = async () => {
             </el-table-column>
             <el-table-column label="次數" width="120">
               <template #default="{ row }">
-                <el-input-number v-model="row.reps" :min="1" :disabled="isReadOnly" />
+                <el-select
+                  v-model="row.reps"
+                  class="reps-select"
+                  filterable
+                  :disabled="isReadOnly"
+                  placeholder="選擇次數"
+                >
+                  <el-option
+                    v-for="option in repOptions"
+                    :key="`reps-${option}`"
+                    :label="option"
+                    :value="option"
+                  />
+                </el-select>
               </template>
             </el-table-column>
             <el-table-column label="備註">
@@ -525,11 +572,16 @@ const handleDelete = async () => {
                 <el-input v-model="row.note" placeholder="選填" :disabled="isReadOnly" />
               </template>
             </el-table-column>
-            <el-table-column label="操作" width="100">
-              <template #default="{ $index }">
-                <el-button type="danger" link :disabled="isReadOnly" @click="handleRemoveSet(entry, $index)">
-                  移除
-                </el-button>
+            <el-table-column width="160" align="right">
+              <template #default="{ row, $index }">
+                <div class="table-actions">
+                  <el-button type="primary" link :disabled="isReadOnly" @click="handleAddSet(entry)">
+                    新增組數
+                  </el-button>
+                  <el-button type="danger" link :disabled="isReadOnly" @click="handleRemoveSet(entry, $index)">
+                    移除此組
+                  </el-button>
+                </div>
               </template>
             </el-table-column>
           </el-table>
@@ -727,8 +779,17 @@ const handleDelete = async () => {
   gap: 0.5rem;
 }
 
+.weight-select {
+  flex: 1;
+  min-width: 0;
+}
+
 .unit-select {
   width: 90px;
+}
+
+.reps-select {
+  width: 100%;
 }
 
 .table-actions {
