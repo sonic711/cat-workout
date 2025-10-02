@@ -20,6 +20,7 @@ const predefinedUsers: Record<string, { password: string }> = {
   admin: { password: 'admin' },
   sean: { password: 'sean' },
   shekx: { password: 'shekx' },
+  72: { password: '72' },
 }
 
 const normalizeUsername = (value: string) => value.trim().toLowerCase()

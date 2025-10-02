@@ -302,7 +302,7 @@ const handleLogout = async () => {
             </el-form-item>
           </el-form>
           <p class="login-hint">
-            僅輸入帳號可瀏覽個人紀錄。使用 admin/admin 或 sean/sean 取得編輯權限。
+            僅輸入帳號可瀏覽個人紀錄。輸入密碼可取得編輯權限。
           </p>
         </template>
       </div>
