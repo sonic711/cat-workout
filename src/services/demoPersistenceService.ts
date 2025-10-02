@@ -1,5 +1,5 @@
 import type { PersistenceService } from './persistenceService'
-import type { HydrationPayload } from '@/types/workout'
+import type { DailyNutrition, HydrationPayload, MealType } from '@/types/workout'
 
 const cloneHydration = (payload: HydrationPayload): HydrationPayload => ({
   exercises: payload.exercises.map((exercise) => ({ ...exercise })),
@@ -9,8 +9,26 @@ const cloneHydration = (payload: HydrationPayload): HydrationPayload => ({
       ...entry,
       sets: entry.sets.map((set) => ({ ...set })),
     })),
+    nutrition: cloneNutrition(session.nutrition),
   })),
 })
+
+const cloneNutrition = (nutrition: DailyNutrition | undefined): DailyNutrition | undefined => {
+  if (!nutrition) {
+    return undefined
+  }
+
+  const cloneMeals = (mealType: MealType) => nutrition.meals[mealType]?.map((item) => ({ ...item })) ?? []
+
+  return {
+    waterIntakeMl: nutrition.waterIntakeMl,
+    meals: {
+      breakfast: cloneMeals('breakfast'),
+      lunch: cloneMeals('lunch'),
+      dinner: cloneMeals('dinner'),
+    },
+  }
+}
 
 const createSeedHydration = (): HydrationPayload => {
   const now = new Date().toISOString()
@@ -32,6 +50,36 @@ const createSeedHydration = (): HydrationPayload => {
   const today = formatDate(nowDate)
   const pushDay = formatDate(addDays(nowDate, -2))
   const pullDay = formatDate(addDays(nowDate, 3))
+
+  const nutrition: DailyNutrition = {
+    waterIntakeMl: 1800,
+    meals: {
+      breakfast: [
+        {
+          id: 'meal-breakfast-1',
+          mealType: 'breakfast',
+          name: '燕麥牛奶',
+          calories: 320,
+        },
+      ],
+      lunch: [
+        {
+          id: 'meal-lunch-1',
+          mealType: 'lunch',
+          name: '雞胸便當',
+          calories: 560,
+        },
+      ],
+      dinner: [
+        {
+          id: 'meal-dinner-1',
+          mealType: 'dinner',
+          name: '鮭魚沙拉',
+          calories: 420,
+        },
+      ],
+    },
+  }
 
   return {
     exercises: [
@@ -90,6 +138,7 @@ const createSeedHydration = (): HydrationPayload => {
             ],
           },
         ],
+        nutrition,
         createdAt: now,
         updatedAt: now,
       },
@@ -136,6 +185,7 @@ export const createDemoPersistenceService = (): PersistenceService => {
             ...entry,
             sets: entry.sets.map((set) => ({ ...set })),
           })),
+          nutrition: cloneNutrition(session.nutrition),
         })),
       }
     },

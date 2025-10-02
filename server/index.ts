@@ -20,6 +20,7 @@ interface SessionRow {
   id: string
   date: string | Date
   note: string | null
+  waterMl: number | null
   createdAt: Date | string
   updatedAt: Date | string
 }
@@ -38,6 +39,18 @@ interface SetRow {
   weight: number
   unit: string
   reps: number
+  note: string | null
+  sortOrder: number
+}
+
+type MealType = 'breakfast' | 'lunch' | 'dinner'
+
+interface NutritionRow {
+  id: string
+  sessionId: string
+  mealType: MealType
+  name: string
+  calories: number
   note: string | null
   sortOrder: number
 }
@@ -65,6 +78,19 @@ interface WorkoutEntry {
   sets: WorkoutSet[]
 }
 
+interface NutritionItem {
+  id: string
+  mealType: MealType
+  name: string
+  calories: number
+  note?: string
+}
+
+interface DailyNutrition {
+  meals: Record<MealType, NutritionItem[]>
+  waterIntakeMl: number
+}
+
 interface WorkoutSession {
   id: string
   date: string
@@ -72,6 +98,7 @@ interface WorkoutSession {
   entries: WorkoutEntry[]
   createdAt: string
   updatedAt: string
+  nutrition?: DailyNutrition
 }
 
 interface HydrationPayload {
@@ -154,6 +181,9 @@ const sanitizeTenant = (value: string | null | undefined) => {
 
 const resolveTenant = (req: Request): string => sanitizeTenant(req.header('x-storage-key'))
 
+const isDuplicateColumnError = (error: unknown): boolean =>
+  typeof error === 'object' && error !== null && 'code' in error && (error as { code?: string }).code === 'ER_DUP_FIELDNAME'
+
 const ensureSchema = async () => {
   const connection = await pool.getConnection()
   try {
@@ -175,12 +205,20 @@ const ensureSchema = async () => {
         id VARCHAR(64) NOT NULL,
         date DATE NOT NULL,
         note TEXT NULL,
+        water_ml INT UNSIGNED NOT NULL DEFAULT 0,
         created_at DATETIME(6) NOT NULL,
         updated_at DATETIME(6) NOT NULL,
         PRIMARY KEY (tenant_id, id),
         INDEX idx_sessions_date (tenant_id, date)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
     )
+    await connection
+      .query('ALTER TABLE sessions ADD COLUMN water_ml INT UNSIGNED NOT NULL DEFAULT 0 AFTER note')
+      .catch((error) => {
+        if (!isDuplicateColumnError(error)) {
+          throw error
+        }
+      })
     await connection.query(
       `CREATE TABLE IF NOT EXISTS session_entries (
         tenant_id VARCHAR(128) NOT NULL,
@@ -210,6 +248,22 @@ const ensureSchema = async () => {
         INDEX idx_sets_entry (tenant_id, entry_id)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
     )
+    await connection.query(
+      `CREATE TABLE IF NOT EXISTS session_nutrition_items (
+        tenant_id VARCHAR(128) NOT NULL,
+        id VARCHAR(64) NOT NULL,
+        session_id VARCHAR(64) NOT NULL,
+        meal_type VARCHAR(16) NOT NULL,
+        name VARCHAR(255) NOT NULL,
+        calories INT NOT NULL,
+        note TEXT NULL,
+        sort_order INT NOT NULL,
+        PRIMARY KEY (tenant_id, id),
+        CONSTRAINT fk_nutrition_session FOREIGN KEY (tenant_id, session_id) REFERENCES sessions(tenant_id, id) ON DELETE CASCADE,
+        INDEX idx_nutrition_session (tenant_id, session_id),
+        INDEX idx_nutrition_meal (tenant_id, meal_type)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+    )
   } finally {
     connection.release()
   }
@@ -223,12 +277,15 @@ const mapExerciseRow = (row: ExerciseRow): ExerciseDefinition => ({
   updatedAt: normalizeTimestampFromDb(row.updatedAt, `exercise(${row.id}).updatedAt`),
 })
 
-const mapSessionRow = (row: SessionRow): Omit<WorkoutSession, 'entries'> => ({
+const mapSessionRow = (
+  row: SessionRow,
+): Omit<WorkoutSession, 'entries' | 'nutrition'> & { waterIntakeMl: number } => ({
   id: row.id,
   date: normalizeDateFromDb(row.date, `session(${row.id}).date`),
   note: row.note ?? undefined,
   createdAt: normalizeTimestampFromDb(row.createdAt, `session(${row.id}).createdAt`),
   updatedAt: normalizeTimestampFromDb(row.updatedAt, `session(${row.id}).updatedAt`),
+  waterIntakeMl: typeof row.waterMl === 'number' ? Number(row.waterMl) : 0,
 })
 
 const validateExercises = (payload: unknown): payload is ExerciseDefinition[] => {
@@ -263,7 +320,7 @@ const validateSessions = (payload: unknown): payload is WorkoutSession[] => {
       return false
     }
 
-    return session.entries.every((entry) => {
+    const entriesValid = session.entries.every((entry) => {
       if (!entry || typeof entry !== 'object') {
         return false
       }
@@ -281,6 +338,43 @@ const validateSessions = (payload: unknown): payload is WorkoutSession[] => {
           typeof candidate.weight === 'number' &&
           typeof candidate.unit === 'string' &&
           typeof candidate.reps === 'number'
+        )
+      })
+    })
+
+    if (!entriesValid) {
+      return false
+    }
+
+    if (!session.nutrition) {
+      return true
+    }
+
+    const nutrition = session.nutrition as Partial<DailyNutrition>
+    if (typeof nutrition.waterIntakeMl !== 'number' || nutrition.waterIntakeMl < 0) {
+      return false
+    }
+
+    if (!nutrition.meals || typeof nutrition.meals !== 'object') {
+      return false
+    }
+
+    const mealTypes: MealType[] = ['breakfast', 'lunch', 'dinner']
+    return mealTypes.every((mealType) => {
+      const meals = (nutrition.meals as Record<string, unknown>)[mealType]
+      if (!Array.isArray(meals)) {
+        return false
+      }
+      return meals.every((meal) => {
+        if (!meal || typeof meal !== 'object') {
+          return false
+        }
+        const candidate = meal as Partial<NutritionItem>
+        return (
+          typeof candidate.id === 'string' &&
+          candidate.mealType === mealType &&
+          typeof candidate.name === 'string' &&
+          typeof candidate.calories === 'number'
         )
       })
     })
@@ -308,7 +402,7 @@ const buildHydration = async (tenantId: string): Promise<HydrationPayload> => {
     [tenantId],
   )
   const [sessionRows] = await pool.query<SessionRow[]>(
-    'SELECT id, date, note, created_at AS createdAt, updated_at AS updatedAt FROM sessions WHERE tenant_id = ? ORDER BY date',
+    'SELECT id, date, note, water_ml AS waterMl, created_at AS createdAt, updated_at AS updatedAt FROM sessions WHERE tenant_id = ? ORDER BY date',
     [tenantId],
   )
   const [entryRows] = await pool.query<SessionEntryRow[]>(
@@ -317,6 +411,10 @@ const buildHydration = async (tenantId: string): Promise<HydrationPayload> => {
   )
   const [setRows] = await pool.query<SetRow[]>(
     'SELECT id, entry_id AS entryId, weight, unit, reps, note, sort_order AS sortOrder FROM entry_sets WHERE tenant_id = ? ORDER BY entry_id, sort_order',
+    [tenantId],
+  )
+  const [nutritionRows] = await pool.query<NutritionRow[]>(
+    'SELECT id, session_id AS sessionId, meal_type AS mealType, name, calories, note, sort_order AS sortOrder FROM session_nutrition_items WHERE tenant_id = ? ORDER BY session_id, sort_order',
     [tenantId],
   )
 
@@ -333,6 +431,13 @@ const buildHydration = async (tenantId: string): Promise<HydrationPayload> => {
     const list = setsByEntry.get(set.entryId) ?? []
     list.push(set)
     setsByEntry.set(set.entryId, list)
+  })
+
+  const nutritionBySession = new Map<string, NutritionRow[]>()
+  nutritionRows.forEach((item) => {
+    const list = nutritionBySession.get(item.sessionId) ?? []
+    list.push(item)
+    nutritionBySession.set(item.sessionId, list)
   })
 
   const sessions: WorkoutSession[] = sessionRows.map((row) => {
@@ -354,9 +459,39 @@ const buildHydration = async (tenantId: string): Promise<HydrationPayload> => {
           })),
       }))
 
+    const nutritionSource = (nutritionBySession.get(row.id) ?? []).sort((a, b) => a.sortOrder - b.sortOrder)
+
+    const mapNutritionItems = (mealType: MealType) =>
+      nutritionSource
+        .filter((item) => item.mealType === mealType)
+        .map((item) => ({
+          id: item.id,
+          mealType: item.mealType,
+          name: item.name,
+          calories: Number(item.calories),
+          note: item.note ?? undefined,
+        }))
+
+    const nutritionItems = {
+      breakfast: mapNutritionItems('breakfast'),
+      lunch: mapNutritionItems('lunch'),
+      dinner: mapNutritionItems('dinner'),
+    }
+
+    const shouldIncludeNutrition =
+      base.waterIntakeMl > 0 || nutritionItems.breakfast.length || nutritionItems.lunch.length || nutritionItems.dinner.length
+
+    const { waterIntakeMl, ...sessionBase } = base
+
     return {
-      ...base,
+      ...sessionBase,
       entries,
+      nutrition: shouldIncludeNutrition
+        ? {
+            meals: nutritionItems,
+            waterIntakeMl,
+          }
+        : undefined,
     }
   })
 
@@ -397,6 +532,7 @@ app.put('/api/exercises', async (req: Request, res: Response) => {
       if (!exercises.length) {
         await connection.query('DELETE FROM entry_sets WHERE tenant_id = ?', [tenantId])
         await connection.query('DELETE FROM session_entries WHERE tenant_id = ?', [tenantId])
+        await connection.query('DELETE FROM session_nutrition_items WHERE tenant_id = ?', [tenantId])
         await connection.query('DELETE FROM sessions WHERE tenant_id = ?', [tenantId])
         await connection.query('DELETE FROM exercises WHERE tenant_id = ?', [tenantId])
         return
@@ -448,6 +584,7 @@ app.put('/api/sessions', async (req: Request, res: Response) => {
     await withTransaction(async (connection) => {
       await connection.query('DELETE FROM entry_sets WHERE tenant_id = ?', [tenantId])
       await connection.query('DELETE FROM session_entries WHERE tenant_id = ?', [tenantId])
+      await connection.query('DELETE FROM session_nutrition_items WHERE tenant_id = ?', [tenantId])
       await connection.query('DELETE FROM sessions WHERE tenant_id = ?', [tenantId])
 
       const sessions = req.body
@@ -457,13 +594,14 @@ app.put('/api/sessions', async (req: Request, res: Response) => {
 
       for (const session of sessions) {
         await connection.query(
-          `INSERT INTO sessions (tenant_id, id, date, note, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO sessions (tenant_id, id, date, note, water_ml, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
           [
             tenantId,
             session.id,
             prepareDateForDb(session.date, `session(${session.id}).date`),
             session.note ?? null,
+            session.nutrition?.waterIntakeMl ?? 0,
             prepareTimestampForDb(session.createdAt, `session(${session.id}).createdAt`),
             prepareTimestampForDb(session.updatedAt, `session(${session.id}).updatedAt`),
           ],
@@ -504,6 +642,31 @@ app.put('/api/sessions', async (req: Request, res: Response) => {
             )
           }
         }
+
+        if (session.nutrition?.meals) {
+          const mealTypes: MealType[] = ['breakfast', 'lunch', 'dinner']
+          for (const mealType of mealTypes) {
+            const meals = session.nutrition.meals[mealType] ?? []
+            for (let index = 0; index < meals.length; index += 1) {
+              const meal = meals[index]!
+              await connection.query(
+                `INSERT INTO session_nutrition_items (tenant_id, id, session_id, meal_type, name, calories, note, sort_order)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+                ,
+                [
+                  tenantId,
+                  meal.id,
+                  session.id,
+                  mealType,
+                  meal.name,
+                  meal.calories,
+                  meal.note ?? null,
+                  index,
+                ],
+              )
+            }
+          }
+        }
       }
     })
 
@@ -520,6 +683,7 @@ app.delete('/api/data', async (req: Request, res: Response) => {
     await withTransaction(async (connection) => {
       await connection.query('DELETE FROM entry_sets WHERE tenant_id = ?', [tenantId])
       await connection.query('DELETE FROM session_entries WHERE tenant_id = ?', [tenantId])
+      await connection.query('DELETE FROM session_nutrition_items WHERE tenant_id = ?', [tenantId])
       await connection.query('DELETE FROM sessions WHERE tenant_id = ?', [tenantId])
       await connection.query('DELETE FROM exercises WHERE tenant_id = ?', [tenantId])
     })

@@ -4,9 +4,13 @@ import { defineStore } from 'pinia'
 import type {
   CalendarDaySummary,
   CreateExercisePayload,
+  DailyNutrition,
+  DraftDailyNutrition,
   DraftWorkoutSession,
   ExerciseDefinition,
   HydrationPayload,
+  MealType,
+  NutritionItem,
   UpdateExercisePayload,
   WorkoutSession,
 } from '@/types/workout'
@@ -25,6 +29,8 @@ const generateId = () => {
 const normalizeLabel = (value: string) => value.trim()
 
 const nowIso = () => new Date().toISOString()
+
+const MEAL_TYPES: MealType[] = ['breakfast', 'lunch', 'dinner']
 
 export const useWorkoutStore = defineStore('workout', () => {
   const isHydrated = ref(false)
@@ -113,6 +119,61 @@ export const useWorkoutStore = defineStore('workout', () => {
     return Object.values(exercises.value).some(
       (exercise) => exercise.id !== excludeId && exercise.name.toLowerCase() === lower,
     )
+  }
+
+  const normalizeDraftNutrition = (
+    draftNutrition: DraftDailyNutrition | undefined,
+    existingNutrition: DailyNutrition | undefined,
+  ): DailyNutrition | undefined => {
+    if (!draftNutrition) {
+      return undefined
+    }
+
+    const waterIntake = Number.isFinite(draftNutrition.waterIntakeMl)
+      ? Math.max(0, Number(draftNutrition.waterIntakeMl))
+      : 0
+
+    const normalizedMeals = MEAL_TYPES.reduce<Record<MealType, NutritionItem[]>>((acc, mealType) => {
+      const sourceItems = draftNutrition.meals[mealType] ?? []
+      const existingItems = existingNutrition?.meals[mealType] ?? []
+      const mapped = sourceItems
+        .map((item) => {
+          const baseItem = item.id
+            ? existingItems.find((candidate) => candidate.id === item.id)
+            : undefined
+          const itemId = item.id ?? baseItem?.id ?? generateId()
+          const name = normalizeLabel(item.name)
+          const calories = Number.isFinite(item.calories) ? Number(item.calories) : 0
+          const note = item.note?.trim() || undefined
+
+          return {
+            id: itemId,
+            mealType,
+            name,
+            calories,
+            note,
+          }
+        })
+        .filter((item) => item.name.length > 0 || item.calories > 0 || Boolean(item.note))
+
+      acc[mealType] = mapped
+      return acc
+    }, {
+      breakfast: [],
+      lunch: [],
+      dinner: [],
+    })
+
+    const hasMeals = MEAL_TYPES.some((mealType) => normalizedMeals[mealType]!.length > 0)
+
+    if (!hasMeals && waterIntake <= 0) {
+      return undefined
+    }
+
+    return {
+      waterIntakeMl: waterIntake,
+      meals: normalizedMeals,
+    }
   }
 
   const registerExercise = (payload: CreateExercisePayload): ExerciseDefinition => {
@@ -227,6 +288,8 @@ export const useWorkoutStore = defineStore('workout', () => {
       }
     })
 
+    const normalizedNutrition = normalizeDraftNutrition(draft.nutrition, existingSession?.nutrition)
+
     const session: WorkoutSession = {
       id: sessionId,
       date: dateKey,
@@ -234,6 +297,7 @@ export const useWorkoutStore = defineStore('workout', () => {
       entries: normalizedEntries,
       createdAt: existingSession?.createdAt ?? timestamp,
       updatedAt: timestamp,
+      nutrition: normalizedNutrition,
     }
 
     sessionsByDate.value[dateKey] = session

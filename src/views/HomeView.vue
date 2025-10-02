@@ -7,7 +7,7 @@ import WorkoutSessionEditor from '@/components/workout/WorkoutSessionEditor.vue'
 import ExerciseManager from '@/components/workout/ExerciseManager.vue'
 import { useWorkoutStore } from '@/stores/workoutStore'
 import { useAuthStore } from '@/stores/authStore'
-import type { WorkoutSession } from '@/types/workout'
+import type { MealType, WorkoutSession } from '@/types/workout'
 
 const workoutStore = useWorkoutStore()
 const { calendarSummaryByDate, sessionByDate, sessionDates, exercises } = storeToRefs(workoutStore)
@@ -41,6 +41,58 @@ const entryHasSetNote = (entry: WorkoutEntry) => entry.sets.some((set) => Boolea
 
 const getExerciseName = (exerciseId: string) => exercises.value[exerciseId]?.name ?? '未命名動作'
 const getExerciseBodyPart = (exerciseId: string) => exercises.value[exerciseId]?.bodyPart ?? '未分類'
+
+const mealTypes: MealType[] = ['breakfast', 'lunch', 'dinner']
+
+const mealLabels: Record<MealType, string> = {
+  breakfast: '早餐',
+  lunch: '午餐',
+  dinner: '晚餐',
+}
+
+const nutritionForSelectedDate = computed(() => sessionForSelectedDate.value?.nutrition ?? null)
+
+const mealTotalsForSelectedDate = computed<Record<MealType, number>>(() => {
+  const totals: Record<MealType, number> = {
+    breakfast: 0,
+    lunch: 0,
+    dinner: 0,
+  }
+  const nutrition = nutritionForSelectedDate.value
+  if (!nutrition) {
+    return totals
+  }
+  for (const mealType of mealTypes) {
+    totals[mealType] = nutrition.meals[mealType].reduce((sum, item) => sum + item.calories, 0)
+  }
+  return totals
+})
+
+const totalCaloriesForSelectedDate = computed(() =>
+  mealTypes.reduce((sum, mealType) => sum + mealTotalsForSelectedDate.value[mealType], 0),
+)
+
+const waterIntakeForSelectedDate = computed(() => nutritionForSelectedDate.value?.waterIntakeMl ?? 0)
+
+const mealsForSelectedDate = computed(() =>
+  mealTypes.map((mealType) => ({
+    mealType,
+    label: mealLabels[mealType],
+    items: nutritionForSelectedDate.value?.meals[mealType] ?? [],
+    calories: mealTotalsForSelectedDate.value[mealType],
+  })),
+)
+
+const hasNutritionForSelectedDate = computed(() => {
+  const nutrition = nutritionForSelectedDate.value
+  if (!nutrition) {
+    return false
+  }
+  if (nutrition.waterIntakeMl > 0) {
+    return true
+  }
+  return mealTypes.some((mealType) => nutrition.meals[mealType].length > 0)
+})
 
 const openEditor = () => {
   if (!authStore.canEdit) {
@@ -315,6 +367,42 @@ const handleLogout = async () => {
                 建立訓練紀錄
               </el-button>
             </template>
+
+            <template v-if="sessionForSelectedDate">
+              <el-divider content-position="left">每日飲食</el-divider>
+              <div v-if="hasNutritionForSelectedDate" class="nutrition-summary">
+                <div class="water-summary">
+                  <span class="label">喝水量</span>
+                  <span class="value">{{ waterIntakeForSelectedDate }} ml</span>
+                </div>
+                <div class="meal-summary-grid">
+                  <div
+                    v-for="meal in mealsForSelectedDate"
+                    :key="meal.mealType"
+                    class="meal-summary-card"
+                  >
+                    <div class="meal-summary-header">
+                      <span class="meal-name">{{ meal.label }}</span>
+                      <span class="meal-calories">{{ meal.calories }} kcal</span>
+                    </div>
+                    <ul v-if="meal.items.length" class="meal-item-list">
+                      <li v-for="item in meal.items" :key="item.id" class="meal-item">
+                        <span>{{ item.name }}</span>
+                        <span class="kcal">{{ item.calories }} kcal</span>
+                      </li>
+                    </ul>
+                    <p v-else class="meal-empty">尚未記錄</p>
+                  </div>
+                </div>
+                <div class="nutrition-total-row">
+                  <span>每日總熱量</span>
+                  <strong>{{ totalCaloriesForSelectedDate }} kcal</strong>
+                </div>
+              </div>
+              <div v-else class="nutrition-placeholder-wrapper">
+                <el-empty description="尚未紀錄今日飲食" class="nutrition-placeholder" />
+              </div>
+            </template>
           </el-card>
         </el-col>
       </el-row>
@@ -522,6 +610,112 @@ const handleLogout = async () => {
 
 .muted {
   color: #9ca3af;
+}
+
+.nutrition-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.water-summary {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+  background: linear-gradient(90deg, rgba(79, 70, 229, 0.12), rgba(59, 130, 246, 0.12));
+}
+
+.water-summary .label {
+  font-weight: 600;
+  color: #312e81;
+}
+
+.water-summary .value {
+  font-weight: 600;
+  color: #1d4ed8;
+}
+
+.meal-summary-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+@media (min-width: 768px) {
+  .meal-summary-grid {
+    flex-direction: row;
+  }
+}
+
+.meal-summary-card {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  border: 1px solid var(--el-border-color-light);
+  border-radius: 8px;
+  background-color: var(--el-fill-color-blank);
+}
+
+.meal-summary-header {
+  display: flex;
+  justify-content: space-between;
+  font-weight: 600;
+}
+
+.meal-name {
+  color: #1f2937;
+}
+
+.meal-calories {
+  color: #2563eb;
+}
+
+.meal-item-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding-left: 0.75rem;
+  margin: 0;
+}
+
+.meal-item {
+  display: flex;
+  justify-content: space-between;
+  color: #374151;
+}
+
+.meal-item .kcal {
+  color: #2563eb;
+}
+
+.meal-empty {
+  margin: 0;
+  color: #9ca3af;
+  font-size: 0.9rem;
+}
+
+.nutrition-total-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+  background-color: rgba(16, 185, 129, 0.12);
+  font-weight: 600;
+  color: #047857;
+}
+
+.nutrition-placeholder-wrapper {
+  margin-top: 1rem;
+}
+
+.nutrition-placeholder {
+  margin: 0;
 }
 
 .detail-placeholder {

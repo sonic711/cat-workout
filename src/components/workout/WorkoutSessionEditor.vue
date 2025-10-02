@@ -5,10 +5,13 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 
 import { useWorkoutStore } from '@/stores/workoutStore'
 import type {
+  DraftDailyNutrition,
+  DraftNutritionItem,
   DraftWorkoutEntry,
   DraftWorkoutSession,
   DraftWorkoutSet,
   ExerciseDefinition,
+  MealType,
   WorkoutSession,
 } from '@/types/workout'
 
@@ -29,7 +32,7 @@ const emit = defineEmits<{
 const workoutStore = useWorkoutStore()
 const { exercises } = storeToRefs(workoutStore)
 
-const draft = ref<DraftWorkoutSession>(createEmptyDraft())
+type SessionDraft = DraftWorkoutSession & { nutrition: DraftDailyNutrition }
 
 const isVisible = computed({
   get: () => props.modelValue,
@@ -46,15 +49,59 @@ const newExerciseForm = reactive({
   bodyPart: '',
 })
 
+const mealTypes: MealType[] = ['breakfast', 'lunch', 'dinner']
+
+const mealLabels: Record<MealType, string> = {
+  breakfast: '早餐',
+  lunch: '午餐',
+  dinner: '晚餐',
+}
+
+const createEmptyNutritionDraft = (): DraftDailyNutrition => ({
+  waterIntakeMl: 0,
+  meals: {
+    breakfast: [],
+    lunch: [],
+    dinner: [],
+  },
+})
+
+const createEmptyMealItem = (mealType: MealType): DraftNutritionItem => ({
+  mealType,
+  name: '',
+  calories: 0,
+})
+
 const exerciseOptions = computed<ExerciseDefinition[]>(() => Object.values(exercises.value))
 
-function createEmptyDraft(): DraftWorkoutSession {
+function createEmptyDraft(): SessionDraft {
   return {
     date: props.date,
     note: '',
     entries: [],
+    nutrition: createEmptyNutritionDraft(),
   }
 }
+
+const draft = ref<SessionDraft>(createEmptyDraft())
+
+const mealTotals = computed<Record<MealType, number>>(() => {
+  const totals: Record<MealType, number> = {
+    breakfast: 0,
+    lunch: 0,
+    dinner: 0,
+  }
+  for (const mealType of mealTypes) {
+    totals[mealType] = draft.value.nutrition.meals[mealType].reduce((sum, item) => {
+      const value = Number(item.calories)
+      return sum + (Number.isFinite(value) ? value : 0)
+    }, 0)
+  }
+
+  return totals
+})
+
+const totalCalories = computed(() => mealTypes.reduce((sum, type) => sum + mealTotals.value[type], 0))
 
 const createEmptySet = (): DraftWorkoutSet => ({
   weight: 0,
@@ -81,6 +128,23 @@ const hydrateDraft = () => {
           note: set.note ?? '',
         })),
       })),
+      nutrition: (() => {
+        const nutritionDraft = createEmptyNutritionDraft()
+        const source = props.session?.nutrition
+        if (source) {
+          nutritionDraft.waterIntakeMl = source.waterIntakeMl
+          for (const mealType of mealTypes) {
+            nutritionDraft.meals[mealType] = source.meals[mealType].map((item) => ({
+              id: item.id,
+              mealType,
+              name: item.name,
+              calories: item.calories,
+              note: item.note ?? '',
+            }))
+          }
+        }
+        return nutritionDraft
+      })(),
     }
     if (!draft.value.entries.length) {
       draft.value.entries.push(createEmptyEntry())
@@ -136,6 +200,19 @@ const handleRemoveSet = (entry: DraftWorkoutEntry, index: number) => {
     if (!entry.sets.length) {
       entry.sets.push(createEmptySet())
     }
+  })
+}
+
+const handleAddMealItem = (mealType: MealType) => {
+  guardMutation(() => {
+    draft.value.nutrition.meals[mealType].push(createEmptyMealItem(mealType))
+  })
+}
+
+const handleRemoveMealItem = (mealType: MealType, index: number) => {
+  guardMutation(() => {
+    const targetMeals = draft.value.nutrition.meals[mealType]
+    targetMeals.splice(index, 1)
   })
 }
 
@@ -241,6 +318,23 @@ const sanitizeDraft = (): DraftWorkoutSession => ({
       note: set.note?.trim() || undefined,
     })),
   })),
+  nutrition: {
+    waterIntakeMl: Number(draft.value.nutrition.waterIntakeMl) || 0,
+    meals: mealTypes.reduce<DraftDailyNutrition['meals']>((acc, mealType) => {
+      acc[mealType] = draft.value.nutrition.meals[mealType].map((item) => ({
+        id: item.id,
+        mealType,
+        name: item.name,
+        calories: Number(item.calories) || 0,
+        note: item.note?.trim() || undefined,
+      }))
+      return acc
+    }, {
+      breakfast: [],
+      lunch: [],
+      dinner: [],
+    }),
+  },
 })
 
 const validateDraft = () => {
@@ -266,6 +360,29 @@ const validateDraft = () => {
       if (set.reps <= 0) {
         ElMessage.error('次數需大於 0')
         return false
+      }
+    }
+  }
+
+  if (draft.value.nutrition) {
+    if (draft.value.nutrition.waterIntakeMl < 0) {
+      ElMessage.error('喝水量不可為負數')
+      return false
+    }
+
+    for (const mealType of mealTypes) {
+      const items = draft.value.nutrition.meals[mealType]
+      for (const item of items) {
+        const name = item.name.trim()
+        if (!name) {
+          ElMessage.error(`請為${mealLabels[mealType]}項目填寫名稱`)
+          return false
+        }
+        const calories = Number(item.calories)
+        if (!Number.isFinite(calories) || calories < 0) {
+          ElMessage.error(`請為${mealLabels[mealType]}項目設定有效的大卡數`)
+          return false
+        }
       }
     }
   }
@@ -332,7 +449,7 @@ const handleDelete = async () => {
 </script>
 
 <template>
-  <el-dialog :model-value="isVisible" title="管理訓練紀錄" width="720px" @close="closeDialog">
+  <el-dialog :model-value="isVisible" title="管理訓練紀錄" width="720px" class="session-editor-dialog" @close="closeDialog">
     <div class="dialog-content">
       <el-alert
         v-if="isReadOnly"
@@ -432,6 +549,78 @@ const handleDelete = async () => {
           新增訓練項目
         </el-button>
       </div>
+
+      <el-divider />
+
+      <div class="nutrition-section">
+        <div class="nutrition-header">
+          <h3>飲食與水分紀錄</h3>
+          <span class="nutrition-total">總熱量：{{ totalCalories }} kcal</span>
+        </div>
+        <div class="water-intake-row">
+          <label>喝水量 (ml)</label>
+          <el-input-number
+            v-model="draft.nutrition.waterIntakeMl"
+            :min="0"
+            :step="100"
+            :disabled="isReadOnly"
+          />
+        </div>
+        <div class="meal-grid">
+          <div v-for="mealType in mealTypes" :key="mealType" class="meal-column">
+            <div class="meal-header-row">
+              <div class="meal-title">
+                <h4>{{ mealLabels[mealType] }}</h4>
+                <span class="meal-total">{{ mealTotals[mealType] }} kcal</span>
+              </div>
+              <el-button
+                type="primary"
+                link
+                :disabled="isReadOnly"
+                @click="handleAddMealItem(mealType)"
+              >
+                新增項目
+              </el-button>
+            </div>
+            <div v-if="draft.nutrition.meals[mealType].length" class="meal-items">
+              <div
+                v-for="(item, itemIndex) in draft.nutrition.meals[mealType]"
+                :key="item.id ?? `${mealType}-${itemIndex}`"
+                class="meal-item"
+              >
+                <el-input
+                  v-model="item.name"
+                  placeholder="餐點名稱"
+                  :disabled="isReadOnly"
+                  class="meal-name-input"
+                />
+                <div class="meal-calories">
+                  <el-input-number
+                    v-model="item.calories"
+                    :min="0"
+                    :step="10"
+                    :disabled="isReadOnly"
+                  />
+                  <span class="unit">kcal</span>
+                </div>
+                <el-button
+                  type="danger"
+                  link
+                  :disabled="isReadOnly"
+                  @click="handleRemoveMealItem(mealType, itemIndex)"
+                >
+                  移除
+                </el-button>
+              </div>
+            </div>
+            <el-empty
+              v-else
+              description="尚未新增項目"
+              :image-size="60"
+            />
+          </div>
+        </div>
+      </div>
     </div>
 
     <template #footer>
@@ -474,6 +663,12 @@ const handleDelete = async () => {
   display: flex;
   flex-direction: column;
   gap: 1.5rem;
+}
+
+.session-editor-dialog :deep(.el-dialog__body) {
+  max-height: 70vh;
+  overflow-y: auto;
+  padding-right: 8px;
 }
 
 .readonly-alert {
@@ -544,5 +739,108 @@ const handleDelete = async () => {
   display: flex;
   justify-content: flex-end;
   gap: 0.5rem;
+}
+
+.nutrition-section {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.nutrition-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.nutrition-header h3 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.nutrition-total {
+  font-weight: 600;
+  color: #2563eb;
+}
+
+.water-intake-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.water-intake-row label {
+  min-width: 96px;
+  color: #4b5563;
+}
+
+.meal-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+
+.meal-column {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0.75rem;
+  border: 1px dashed var(--el-border-color);
+  border-radius: 8px;
+  background-color: var(--el-fill-color-blank);
+}
+
+.meal-header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.meal-title {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.meal-title h4 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.meal-total {
+  font-size: 0.85rem;
+  color: #6b7280;
+}
+
+.meal-items {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.meal-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 0.75rem;
+  border: 1px solid var(--el-border-color-light);
+  border-radius: 8px;
+  background-color: var(--el-fill-color-lighter);
+}
+
+.meal-name-input {
+  flex: 1;
+}
+
+.meal-calories {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.meal-calories .unit {
+  color: #6b7280;
+  font-size: 0.85rem;
 }
 </style>

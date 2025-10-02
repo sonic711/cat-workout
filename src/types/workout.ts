@@ -1,5 +1,7 @@
 export type WeightUnit = 'kg' | 'lb'
 
+export type MealType = 'breakfast' | 'lunch' | 'dinner'
+
 export interface WorkoutSet {
   id: string
   weight: number
@@ -15,6 +17,19 @@ export interface WorkoutEntry {
   sets: WorkoutSet[]
 }
 
+export interface NutritionItem {
+  id: string
+  name: string
+  calories: number
+  note?: string
+  mealType: MealType
+}
+
+export interface DailyNutrition {
+  meals: Record<MealType, NutritionItem[]>
+  waterIntakeMl: number
+}
+
 export interface WorkoutSession {
   id: string
   date: string
@@ -22,6 +37,7 @@ export interface WorkoutSession {
   entries: WorkoutEntry[]
   createdAt: string
   updatedAt: string
+  nutrition?: DailyNutrition
 }
 
 export interface ExerciseDefinition {
@@ -47,11 +63,25 @@ export interface DraftWorkoutEntry {
   sets: DraftWorkoutSet[]
 }
 
+export interface DraftNutritionItem {
+  id?: string
+  name: string
+  calories: number
+  note?: string
+  mealType: MealType
+}
+
+export interface DraftDailyNutrition {
+  meals: Record<MealType, DraftNutritionItem[]>
+  waterIntakeMl: number
+}
+
 export interface DraftWorkoutSession {
   id?: string
   date: string
   note?: string
   entries: DraftWorkoutEntry[]
+  nutrition?: DraftDailyNutrition
 }
 
 export interface CreateExercisePayload {
