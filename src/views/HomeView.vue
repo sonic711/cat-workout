@@ -2,12 +2,13 @@
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { ElMessage } from 'element-plus'
+import { Timer } from '@element-plus/icons-vue'
 
 import WorkoutSessionEditor from '@/components/workout/WorkoutSessionEditor.vue'
 import ExerciseManager from '@/components/workout/ExerciseManager.vue'
 import { useWorkoutStore } from '@/stores/workoutStore'
 import { useAuthStore } from '@/stores/authStore'
-import type { MealType, WorkoutSession } from '@/types/workout'
+import type { ExerciseCategory, MealType, WorkoutSession } from '@/types/workout'
 
 const workoutStore = useWorkoutStore()
 const { calendarSummaryByDate, sessionByDate, sessionDates, exercises } = storeToRefs(workoutStore)
@@ -39,10 +40,43 @@ const sessionForSelectedDate = computed(() => sessionByDate.value(selectedDateKe
 
 type WorkoutEntry = WorkoutSession['entries'][number]
 
-const entryHasSetNote = (entry: WorkoutEntry) => entry.sets.some((set) => Boolean(set.note?.trim()))
+const CATEGORY_LABELS: Record<ExerciseCategory, string> = {
+  strength: '重量訓練',
+  cardio: '有氧運動',
+}
 
-const getExerciseName = (exerciseId: string) => exercises.value[exerciseId]?.name ?? '未命名動作'
-const getExerciseBodyPart = (exerciseId: string) => exercises.value[exerciseId]?.bodyPart ?? '未分類'
+const getExerciseById = (exerciseId: string) => exercises.value[exerciseId]
+
+const getExerciseName = (exerciseId: string) => getExerciseById(exerciseId)?.name ?? '未命名動作'
+
+const getExerciseCategory = (exerciseId: string): ExerciseCategory =>
+  getExerciseById(exerciseId)?.category ?? 'strength'
+
+const isCardioEntry = (entry: WorkoutEntry) => getExerciseCategory(entry.exerciseId) === 'cardio'
+
+const getExerciseBodyPartLabel = (exerciseId: string) => {
+  const exercise = getExerciseById(exerciseId)
+  if (!exercise) {
+    return '未分類'
+  }
+  if (exercise.category === 'cardio') {
+    return CATEGORY_LABELS.cardio
+  }
+  return exercise.bodyPart?.trim() || '未分類'
+}
+
+const entryHasSetNote = (entry: WorkoutEntry) => !isCardioEntry(entry) && entry.sets.some((set) => Boolean(set.note?.trim()))
+
+const formatEntrySummary = (entry: WorkoutEntry) => {
+  if (isCardioEntry(entry)) {
+    const duration = Number(entry.durationMinutes)
+    if (!Number.isFinite(duration) || duration <= 0) {
+      return '時長 0 分鐘'
+    }
+    return `時長 ${duration} 分鐘`
+  }
+  return `共 ${entry.sets.length} 組`
+}
 
 const mealTypes: MealType[] = ['breakfast', 'lunch', 'dinner']
 
@@ -354,12 +388,18 @@ const handleLogout = async () => {
                   <div class="entry-header">
                     <div>
                       <h3 class="exercise-name">{{ getExerciseName(entry.exerciseId) }}</h3>
-                      <span class="entry-body-part">{{ getExerciseBodyPart(entry.exerciseId) }}</span>
+                      <span class="entry-body-part">{{ getExerciseBodyPartLabel(entry.exerciseId) }}</span>
                     </div>
-                    <span class="set-count">共 {{ entry.sets.length }} 組</span>
+                    <span class="set-count">{{ formatEntrySummary(entry) }}</span>
                   </div>
                   <p v-if="entry.note" class="entry-note">{{ entry.note }}</p>
+                  <div v-if="isCardioEntry(entry)" class="cardio-summary">
+                    <el-icon><Timer /></el-icon>
+                    <span class="cardio-summary-label">時長</span>
+                    <span class="cardio-summary-value">{{ entry.durationMinutes ?? 0 }} 分鐘</span>
+                  </div>
                   <el-table
+                    v-else
                     :data="entry.sets"
                     size="small"
                     border
@@ -697,6 +737,22 @@ const handleLogout = async () => {
   margin-top: 0.25rem;
   border-radius: 0.75rem;
   overflow: hidden;
+}
+
+.cardio-summary {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.5rem 0;
+  color: #1f2937;
+}
+
+.cardio-summary-label {
+  font-weight: 600;
+}
+
+.cardio-summary-value {
+  font-weight: 600;
 }
 
 .entry-note {

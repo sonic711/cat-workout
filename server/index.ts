@@ -8,9 +8,12 @@ import {
   prepareTimestampForDb,
 } from './dateUtils'
 
+type ExerciseCategory = 'strength' | 'cardio'
+
 interface ExerciseRow {
   id: string
   name: string
+  category: string
   bodyPart: string
   createdAt: Date | string
   updatedAt: Date | string
@@ -32,6 +35,7 @@ interface SessionEntryRow {
   exerciseId: string
   note: string | null
   sortOrder: number
+  durationMinutes: number | null
 }
 
 interface SetRow {
@@ -59,7 +63,8 @@ interface NutritionRow {
 interface ExerciseDefinition {
   id: string
   name: string
-  bodyPart: string
+  category: ExerciseCategory
+  bodyPart?: string
   createdAt: string
   updatedAt: string
 }
@@ -77,6 +82,7 @@ interface WorkoutEntry {
   exerciseId: string
   note?: string
   sets: WorkoutSet[]
+  durationMinutes?: number
 }
 
 interface NutritionItem {
@@ -194,6 +200,7 @@ const ensureSchema = async () => {
         tenant_id VARCHAR(128) NOT NULL,
         id VARCHAR(64) NOT NULL,
         name VARCHAR(255) NOT NULL,
+        category VARCHAR(32) NOT NULL DEFAULT 'strength',
         body_part VARCHAR(64) NOT NULL,
         created_at DATETIME(6) NOT NULL,
         updated_at DATETIME(6) NOT NULL,
@@ -231,6 +238,15 @@ const ensureSchema = async () => {
           throw error
         }
       })
+    await connection
+      .query(
+        "ALTER TABLE exercises ADD COLUMN category VARCHAR(32) NOT NULL DEFAULT 'strength' AFTER name",
+      )
+      .catch((error) => {
+        if (!isDuplicateColumnError(error)) {
+          throw error
+        }
+      })
     await connection.query(
       `CREATE TABLE IF NOT EXISTS session_entries (
         tenant_id VARCHAR(128) NOT NULL,
@@ -238,6 +254,7 @@ const ensureSchema = async () => {
         session_id VARCHAR(64) NOT NULL,
         exercise_id VARCHAR(64) NOT NULL,
         note TEXT NULL,
+        duration_minutes INT UNSIGNED NOT NULL DEFAULT 0,
         sort_order INT NOT NULL,
         PRIMARY KEY (tenant_id, id),
         CONSTRAINT fk_entries_session FOREIGN KEY (tenant_id, session_id) REFERENCES sessions(tenant_id, id) ON DELETE CASCADE,
@@ -245,6 +262,15 @@ const ensureSchema = async () => {
         INDEX idx_entries_session (tenant_id, session_id)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
     )
+    await connection
+      .query(
+        'ALTER TABLE session_entries ADD COLUMN duration_minutes INT UNSIGNED NOT NULL DEFAULT 0 AFTER note',
+      )
+      .catch((error) => {
+        if (!isDuplicateColumnError(error)) {
+          throw error
+        }
+      })
     await connection.query(
       `CREATE TABLE IF NOT EXISTS entry_sets (
         tenant_id VARCHAR(128) NOT NULL,
@@ -281,13 +307,17 @@ const ensureSchema = async () => {
   }
 }
 
-const mapExerciseRow = (row: ExerciseRow): ExerciseDefinition => ({
-  id: row.id,
-  name: row.name,
-  bodyPart: row.bodyPart,
-  createdAt: normalizeTimestampFromDb(row.createdAt, `exercise(${row.id}).createdAt`),
-  updatedAt: normalizeTimestampFromDb(row.updatedAt, `exercise(${row.id}).updatedAt`),
-})
+const mapExerciseRow = (row: ExerciseRow): ExerciseDefinition => {
+  const category: ExerciseCategory = row.category === 'cardio' ? 'cardio' : 'strength'
+  return {
+    id: row.id,
+    name: row.name,
+    category,
+    bodyPart: category === 'strength' ? row.bodyPart : undefined,
+    createdAt: normalizeTimestampFromDb(row.createdAt, `exercise(${row.id}).createdAt`),
+    updatedAt: normalizeTimestampFromDb(row.updatedAt, `exercise(${row.id}).updatedAt`),
+  }
+}
 
 const mapSessionRow = (
   row: SessionRow,
@@ -307,10 +337,14 @@ const validateExercises = (payload: unknown): payload is ExerciseDefinition[] =>
       return false
     }
     const exercise = item as Partial<ExerciseDefinition>
+    const category = typeof exercise.category === 'string' ? exercise.category : 'strength'
+    if (category !== 'strength' && category !== 'cardio') {
+      return false
+    }
     return (
       typeof exercise.id === 'string' &&
       typeof exercise.name === 'string' &&
-      typeof exercise.bodyPart === 'string' &&
+      (category === 'cardio' || typeof exercise.bodyPart === 'string') &&
       typeof exercise.createdAt === 'string' &&
       typeof exercise.updatedAt === 'string'
     )
@@ -339,6 +373,9 @@ const validateSessions = (payload: unknown): payload is WorkoutSession[] => {
       }
       const detail = entry as Partial<WorkoutEntry>
       if (typeof detail.id !== 'string' || typeof detail.exerciseId !== 'string' || !Array.isArray(detail.sets)) {
+        return false
+      }
+      if (detail.durationMinutes != null && typeof detail.durationMinutes !== 'number') {
         return false
       }
       return detail.sets.every((set) => {
@@ -415,7 +452,7 @@ const withTransaction = async <T>(handler: (connection: PoolConnection) => Promi
 
 const buildHydration = async (tenantId: string): Promise<HydrationPayload> => {
   const [exerciseRows] = await pool.query<ExerciseRow[]>(
-    'SELECT id, name, body_part AS bodyPart, created_at AS createdAt, updated_at AS updatedAt FROM exercises WHERE tenant_id = ? ORDER BY name',
+    'SELECT id, name, category, body_part AS bodyPart, created_at AS createdAt, updated_at AS updatedAt FROM exercises WHERE tenant_id = ? ORDER BY name',
     [tenantId],
   )
   const [sessionRows] = await pool.query<SessionRow[]>(
@@ -423,7 +460,7 @@ const buildHydration = async (tenantId: string): Promise<HydrationPayload> => {
     [tenantId],
   )
   const [entryRows] = await pool.query<SessionEntryRow[]>(
-    'SELECT id, session_id AS sessionId, exercise_id AS exerciseId, note, sort_order AS sortOrder FROM session_entries WHERE tenant_id = ? ORDER BY session_id, sort_order',
+    'SELECT id, session_id AS sessionId, exercise_id AS exerciseId, note, duration_minutes AS durationMinutes, sort_order AS sortOrder FROM session_entries WHERE tenant_id = ? ORDER BY session_id, sort_order',
     [tenantId],
   )
   const [setRows] = await pool.query<SetRow[]>(
@@ -465,6 +502,7 @@ const buildHydration = async (tenantId: string): Promise<HydrationPayload> => {
         id: entry.id,
         exerciseId: entry.exerciseId,
         note: entry.note ?? undefined,
+        durationMinutes: entry.durationMinutes ?? undefined,
         sets: (setsByEntry.get(entry.id) ?? [])
           .sort((a, b) => a.sortOrder - b.sortOrder)
           .map((set) => ({
@@ -563,11 +601,14 @@ app.put('/api/exercises', async (req: Request, res: Response) => {
       }
 
       for (const exercise of exercises) {
+        const category: ExerciseCategory = exercise.category === 'cardio' ? 'cardio' : 'strength'
+        const bodyPartValue = category === 'cardio' ? '' : exercise.bodyPart ?? ''
         await connection.query(
-          `INSERT INTO exercises (tenant_id, id, name, body_part, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?)
+          `INSERT INTO exercises (tenant_id, id, name, category, body_part, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)
            ON DUPLICATE KEY UPDATE
              name = VALUES(name),
+             category = VALUES(category),
              body_part = VALUES(body_part),
              created_at = VALUES(created_at),
              updated_at = VALUES(updated_at)`,
@@ -575,7 +616,8 @@ app.put('/api/exercises', async (req: Request, res: Response) => {
             tenantId,
             exercise.id,
             exercise.name,
-            exercise.bodyPart,
+            category,
+            bodyPartValue,
             prepareTimestampForDb(exercise.createdAt, `exercise(${exercise.id}).createdAt`),
             prepareTimestampForDb(exercise.updatedAt, `exercise(${exercise.id}).updatedAt`),
           ],
@@ -627,9 +669,13 @@ app.put('/api/sessions', async (req: Request, res: Response) => {
 
         for (let entryIndex = 0; entryIndex < session.entries.length; entryIndex += 1) {
           const entry = session.entries[entryIndex]!
+          const durationMinutes =
+            typeof entry.durationMinutes === 'number' && entry.durationMinutes > 0
+              ? Math.round(entry.durationMinutes)
+              : 0
           await connection.query(
-            `INSERT INTO session_entries (tenant_id, id, session_id, exercise_id, note, sort_order)
-             VALUES (?, ?, ?, ?, ?, ?)`
+            `INSERT INTO session_entries (tenant_id, id, session_id, exercise_id, note, duration_minutes, sort_order)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`
             ,
             [
               tenantId,
@@ -637,6 +683,7 @@ app.put('/api/sessions', async (req: Request, res: Response) => {
               session.id,
               entry.exerciseId,
               entry.note ?? null,
+              durationMinutes,
               entryIndex,
             ],
           )

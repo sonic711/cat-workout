@@ -10,6 +10,7 @@ import type {
   DraftWorkoutEntry,
   DraftWorkoutSession,
   DraftWorkoutSet,
+  ExerciseCategory,
   ExerciseDefinition,
   MealType,
   WeightUnit,
@@ -48,7 +49,20 @@ const exerciseDialogTargetEntry = ref<number | null>(null)
 const newExerciseForm = reactive({
   name: '',
   bodyPart: '',
+  category: 'strength' as ExerciseCategory,
 })
+
+const CATEGORY_LABELS: Record<ExerciseCategory, string> = {
+  strength: '重量訓練',
+  cardio: '有氧運動',
+}
+
+const categoryOptions: { value: ExerciseCategory; label: string }[] = [
+  { value: 'strength', label: CATEGORY_LABELS.strength },
+  { value: 'cardio', label: CATEGORY_LABELS.cardio },
+]
+
+const isNewExerciseStrength = computed(() => newExerciseForm.category === 'strength')
 
 const mealTypes: MealType[] = ['breakfast', 'lunch', 'dinner']
 
@@ -95,6 +109,47 @@ const createEmptyMealItem = (mealType: MealType): DraftNutritionItem => ({
 
 const exerciseOptions = computed<ExerciseDefinition[]>(() => Object.values(exercises.value))
 
+const getExerciseById = (exerciseId: string): ExerciseDefinition | undefined => exercises.value[exerciseId]
+
+const getExerciseCategory = (exerciseId: string): ExerciseCategory =>
+  getExerciseById(exerciseId)?.category ?? 'strength'
+
+const isCardioEntry = (entry: DraftWorkoutEntry) => getExerciseCategory(entry.exerciseId) === 'cardio'
+
+const formatExerciseOptionLabel = (exercise: ExerciseDefinition): string => {
+  if (exercise.category === 'cardio') {
+    return `${exercise.name}（${CATEGORY_LABELS.cardio}）`
+  }
+  const bodyPart = exercise.bodyPart?.trim()
+  return bodyPart?.length ? `${exercise.name}（${bodyPart}）` : exercise.name
+}
+
+const ensureStrengthSets = (entry: DraftWorkoutEntry) => {
+  if (!entry.sets.length) {
+    entry.sets.push(createEmptySet())
+  }
+}
+
+const syncEntryWithExercise = (entry: DraftWorkoutEntry) => {
+  const category = getExerciseCategory(entry.exerciseId)
+  if (category === 'cardio') {
+    entry.sets = []
+    const duration = Number(entry.durationMinutes)
+    if (!Number.isFinite(duration) || duration <= 0) {
+      entry.durationMinutes = DEFAULT_CARDIO_DURATION
+    } else {
+      entry.durationMinutes = Math.round(duration)
+    }
+  } else {
+    ensureStrengthSets(entry)
+    entry.durationMinutes = 0
+  }
+}
+
+const handleEntryExerciseChange = (entry: DraftWorkoutEntry) => {
+  syncEntryWithExercise(entry)
+}
+
 function createEmptyDraft(): SessionDraft {
   return {
     date: props.date,
@@ -132,6 +187,17 @@ const createEmptySet = (): DraftWorkoutSet => ({
   note: '',
 })
 
+const DEFAULT_CARDIO_DURATION = 30
+
+watch(
+  () => newExerciseForm.category,
+  (value) => {
+    if (value === 'cardio') {
+      newExerciseForm.bodyPart = ''
+    }
+  },
+)
+
 const hydrateDraft = () => {
   if (props.session) {
     draft.value = {
@@ -149,6 +215,7 @@ const hydrateDraft = () => {
           reps: set.reps,
           note: set.note ?? '',
         })),
+        durationMinutes: entry.durationMinutes ?? 0,
       })),
       nutrition: (() => {
         const nutritionDraft = createEmptyNutritionDraft()
@@ -172,12 +239,20 @@ const hydrateDraft = () => {
   } else {
     draft.value = createEmptyDraft()
   }
+
+  draft.value.entries.forEach((entry) => {
+    if (!entry.sets.length) {
+      entry.sets = []
+    }
+    syncEntryWithExercise(entry)
+  })
 }
 
 const createEmptyEntry = (): DraftWorkoutEntry => ({
   exerciseId: '',
   note: '',
   sets: [createEmptySet()],
+  durationMinutes: 0,
 })
 
 const closeDialog = () => {
@@ -206,12 +281,19 @@ const handleRemoveEntry = (index: number) => {
 
 const handleAddSet = (entry: DraftWorkoutEntry) => {
   guardMutation(() => {
+    if (isCardioEntry(entry)) {
+      return
+    }
     entry.sets.push(createEmptySet())
   })
 }
 
 const handleRemoveSet = (entry: DraftWorkoutEntry, index: number) => {
   guardMutation(() => {
+    if (isCardioEntry(entry)) {
+      entry.sets = []
+      return
+    }
     entry.sets.splice(index, 1)
     if (!entry.sets.length) {
       entry.sets.push(createEmptySet())
@@ -235,6 +317,7 @@ const handleRemoveMealItem = (mealType: MealType, index: number) => {
 const resetExerciseDialog = () => {
   newExerciseForm.name = ''
   newExerciseForm.bodyPart = ''
+  newExerciseForm.category = 'strength'
   exerciseDialogTargetEntry.value = null
 }
 
@@ -254,22 +337,28 @@ const handleCreateExercise = () => {
   }
 
   const name = newExerciseForm.name.trim()
+  const category = newExerciseForm.category
   const bodyPart = newExerciseForm.bodyPart.trim()
   if (!name) {
     ElMessage.error('請輸入動作名稱')
     return
   }
-  if (!bodyPart) {
+  if (category === 'strength' && !bodyPart) {
     ElMessage.error('請輸入身體部位')
     return
   }
   try {
-    const created = workoutStore.registerExercise({ name, bodyPart })
+    const created = workoutStore.registerExercise({
+      name,
+      category,
+      bodyPart: category === 'strength' ? bodyPart : undefined,
+    })
     const targetIndex = exerciseDialogTargetEntry.value
     if (targetIndex != null) {
       const targetEntry = draft.value.entries[targetIndex]
       if (targetEntry) {
         targetEntry.exerciseId = created.id
+        syncEntryWithExercise(targetEntry)
       }
     }
     ElMessage.success('成功新增動作')
@@ -318,22 +407,48 @@ watch(
   },
 )
 
+watch(
+  () => exercises.value,
+  () => {
+    draft.value.entries.forEach(syncEntryWithExercise)
+  },
+  { deep: true },
+)
+
 const sanitizeDraft = (): DraftWorkoutSession => ({
   id: draft.value.id,
   date: props.date,
   note: draft.value.note?.trim() || undefined,
-  entries: draft.value.entries.map((entry) => ({
-    id: entry.id,
-    exerciseId: entry.exerciseId,
-    note: entry.note?.trim() || undefined,
-    sets: entry.sets.map((set) => ({
-      id: set.id,
-      weight: Number(set.weight),
-      unit: set.unit,
-      reps: Number(set.reps),
-      note: set.note?.trim() || undefined,
-    })),
-  })),
+  entries: draft.value.entries.map((entry) => {
+    const category = getExerciseCategory(entry.exerciseId)
+    const base = {
+      id: entry.id,
+      exerciseId: entry.exerciseId,
+      note: entry.note?.trim() || undefined,
+    }
+
+    if (category === 'cardio') {
+      const duration = Number(entry.durationMinutes)
+      const normalizedDuration = Number.isFinite(duration) ? Math.max(0, Math.round(duration)) : 0
+      return {
+        ...base,
+        sets: [],
+        durationMinutes: normalizedDuration > 0 ? normalizedDuration : undefined,
+      }
+    }
+
+    return {
+      ...base,
+      sets: entry.sets.map((set) => ({
+        id: set.id,
+        weight: Number(set.weight),
+        unit: set.unit,
+        reps: Number(set.reps),
+        note: set.note?.trim() || undefined,
+      })),
+      durationMinutes: undefined,
+    }
+  }),
   nutrition: {
     waterIntakeMl: Number(draft.value.nutrition.waterIntakeMl) || 0,
     meals: mealTypes.reduce<DraftDailyNutrition['meals']>((acc, mealType) => {
@@ -360,8 +475,17 @@ const validateDraft = () => {
       ElMessage.error('請為每個訓練項目選擇動作')
       return false
     }
+    const category = getExerciseCategory(entry.exerciseId)
+    if (category === 'cardio') {
+      const duration = Number(entry.durationMinutes)
+      if (!Number.isFinite(duration) || duration <= 0) {
+        ElMessage.error('請為有氧運動輸入有效的時間（分鐘）')
+        return false
+      }
+      continue
+    }
     if (!entry.sets.length) {
-      ElMessage.error('每個訓練項目需至少一組紀錄')
+      ElMessage.error('每個重量訓練項目需至少一組紀錄')
       return false
     }
     for (const set of entry.sets) {
@@ -499,11 +623,12 @@ const handleDelete = async () => {
               filterable
               class="exercise-select"
               :disabled="isReadOnly"
+              @change="handleEntryExerciseChange(entry)"
             >
               <el-option
                 v-for="exercise in exerciseOptions"
                 :key="exercise.id"
-                :label="`${exercise.name}（${exercise.bodyPart}）`"
+                :label="formatExerciseOptionLabel(exercise)"
                 :value="exercise.id"
               />
             </el-select>
@@ -524,7 +649,18 @@ const handleDelete = async () => {
             :disabled="isReadOnly"
           />
 
-          <el-table :data="entry.sets" size="small" border class="set-table">
+          <div v-if="isCardioEntry(entry)" class="cardio-duration">
+            <el-input-number
+              v-model="entry.durationMinutes"
+              :min="1"
+              :step="5"
+              :disabled="isReadOnly"
+              class="cardio-duration-input"
+            />
+            <span class="cardio-duration-label">分鐘</span>
+          </div>
+
+          <el-table v-else :data="entry.sets" size="small" border class="set-table">
             <el-table-column label="重量 (kg/lb)" width="180">
               <template #default="{ row }">
                 <div class="set-weight">
@@ -586,7 +722,7 @@ const handleDelete = async () => {
             </el-table-column>
           </el-table>
 
-          <div class="table-actions">
+          <div v-if="!isCardioEntry(entry)" class="table-actions">
             <el-button type="primary" plain :disabled="isReadOnly" @click="handleAddSet(entry)">
               新增組數
             </el-button>
@@ -692,7 +828,18 @@ const handleDelete = async () => {
       <el-form-item label="名稱">
         <el-input v-model="newExerciseForm.name" placeholder="例如：槓鈴臥推" :disabled="isReadOnly" />
       </el-form-item>
-      <el-form-item label="部位">
+      <el-form-item label="分類">
+        <el-radio-group v-model="newExerciseForm.category" :disabled="isReadOnly">
+          <el-radio-button
+            v-for="option in categoryOptions"
+            :key="option.value"
+            :label="option.value"
+          >
+            {{ option.label }}
+          </el-radio-button>
+        </el-radio-group>
+      </el-form-item>
+      <el-form-item v-if="isNewExerciseStrength" label="部位">
         <el-input v-model="newExerciseForm.bodyPart" placeholder="例如：胸" :disabled="isReadOnly" />
       </el-form-item>
     </el-form>
@@ -795,6 +942,21 @@ const handleDelete = async () => {
 .table-actions {
   display: flex;
   justify-content: flex-end;
+}
+
+.cardio-duration {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0;
+}
+
+.cardio-duration-input {
+  width: 140px;
+}
+
+.cardio-duration-label {
+  color: #4b5563;
 }
 
 .dialog-footer {

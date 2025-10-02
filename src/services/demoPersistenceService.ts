@@ -86,6 +86,7 @@ const createSeedHydration = (): HydrationPayload => {
       {
         id: 'exercise-squat',
         name: '槓鈴深蹲',
+        category: 'strength',
         bodyPart: '腿',
         createdAt: now,
         updatedAt: now,
@@ -93,6 +94,7 @@ const createSeedHydration = (): HydrationPayload => {
       {
         id: 'exercise-bench',
         name: '臥推',
+        category: 'strength',
         bodyPart: '胸',
         createdAt: now,
         updatedAt: now,
@@ -100,7 +102,15 @@ const createSeedHydration = (): HydrationPayload => {
       {
         id: 'exercise-row',
         name: '俯身划船',
+        category: 'strength',
         bodyPart: '背',
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
+        id: 'exercise-run',
+        name: '跑步機慢跑',
+        category: 'cardio',
         createdAt: now,
         updatedAt: now,
       },
@@ -137,6 +147,13 @@ const createSeedHydration = (): HydrationPayload => {
               { id: 'set-squat-1', weight: 80, unit: 'kg', reps: 8 },
               { id: 'set-squat-2', weight: 90, unit: 'kg', reps: 6 },
             ],
+          },
+          {
+            id: 'entry-run-1',
+            exerciseId: 'exercise-run',
+            note: '慢跑暖身',
+            durationMinutes: 30,
+            sets: [],
           },
         ],
         nutrition,

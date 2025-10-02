@@ -4,7 +4,7 @@ import { storeToRefs } from 'pinia'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 import { useWorkoutStore } from '@/stores/workoutStore'
-import type { ExerciseDefinition } from '@/types/workout'
+import type { ExerciseCategory, ExerciseDefinition } from '@/types/workout'
 
 interface Props {
   modelValue: boolean
@@ -32,13 +32,27 @@ const editingExerciseId = ref<string | null>(null)
 const form = reactive({
   name: '',
   bodyPart: '',
+  category: 'strength' as ExerciseCategory,
 })
+
+const CATEGORY_LABELS: Record<ExerciseCategory, string> = {
+  strength: '重量訓練',
+  cardio: '有氧運動',
+}
+
+const categoryOptions: { value: ExerciseCategory; label: string }[] = [
+  { value: 'strength', label: CATEGORY_LABELS.strength },
+  { value: 'cardio', label: CATEGORY_LABELS.cardio },
+]
+
+const isStrengthCategory = computed(() => form.category === 'strength')
 
 const usageFor = (exerciseId: string) => exerciseUsageById.value(exerciseId)
 
 const resetForm = () => {
   form.name = ''
   form.bodyPart = ''
+  form.category = 'strength'
   mode.value = 'create'
   editingExerciseId.value = null
 }
@@ -66,7 +80,8 @@ const startEdit = (exercise: ExerciseDefinition) => {
     mode.value = 'edit'
     editingExerciseId.value = exercise.id
     form.name = exercise.name
-    form.bodyPart = exercise.bodyPart
+    form.bodyPart = exercise.bodyPart ?? ''
+    form.category = exercise.category
   })
 }
 
@@ -77,23 +92,33 @@ const handleSubmit = () => {
   }
 
   const name = form.name.trim()
+  const category = form.category
   const bodyPart = form.bodyPart.trim()
 
   if (!name) {
     ElMessage.error('請輸入動作名稱')
     return
   }
-  if (!bodyPart) {
+  if (category === 'strength' && !bodyPart) {
     ElMessage.error('請輸入身體部位')
     return
   }
 
   try {
     if (mode.value === 'edit' && editingExerciseId.value) {
-      workoutStore.updateExercise({ id: editingExerciseId.value, name, bodyPart })
+      workoutStore.updateExercise({
+        id: editingExerciseId.value,
+        name,
+        category,
+        bodyPart: category === 'strength' ? bodyPart : undefined,
+      })
       ElMessage.success('已更新訓練動作')
     } else {
-      workoutStore.registerExercise({ name, bodyPart })
+      workoutStore.registerExercise({
+        name,
+        category,
+        bodyPart: category === 'strength' ? bodyPart : undefined,
+      })
       ElMessage.success('已新增訓練動作')
     }
     resetForm()
@@ -164,6 +189,17 @@ const formatTimestamp = (value: string) => {
   return value
 }
 
+const formatCategory = (category: ExerciseCategory) => CATEGORY_LABELS[category] ?? category
+
+watch(
+  () => form.category,
+  (value) => {
+    if (value === 'cardio') {
+      form.bodyPart = ''
+    }
+  },
+)
+
 watch(
   () => props.modelValue,
   (value) => {
@@ -197,7 +233,18 @@ watch(
       <el-form-item label="名稱">
         <el-input v-model="form.name" placeholder="例如：槓鈴深蹲" />
       </el-form-item>
-      <el-form-item label="部位">
+      <el-form-item label="分類">
+        <el-radio-group v-model="form.category">
+          <el-radio-button
+            v-for="option in categoryOptions"
+            :key="option.value"
+            :label="option.value"
+          >
+            {{ option.label }}
+          </el-radio-button>
+        </el-radio-group>
+      </el-form-item>
+      <el-form-item v-if="isStrengthCategory" label="部位">
         <el-input v-model="form.bodyPart" placeholder="例如：腿" />
       </el-form-item>
       <div class="form-actions">
@@ -212,7 +259,17 @@ watch(
 
     <el-table :data="exerciseList" border stripe class="exercise-table" size="small">
       <el-table-column prop="name" label="名稱" min-width="160" />
-      <el-table-column prop="bodyPart" label="身體部位" min-width="120" />
+      <el-table-column label="分類" width="120">
+        <template #default="{ row }">
+          {{ formatCategory(row.category) }}
+        </template>
+      </el-table-column>
+      <el-table-column label="身體部位" min-width="140">
+        <template #default="{ row }">
+          <span v-if="row.category === 'strength' && row.bodyPart">{{ row.bodyPart }}</span>
+          <span v-else class="muted">—</span>
+        </template>
+      </el-table-column>
       <el-table-column label="使用情況" min-width="140">
         <template #default="{ row }">
           <div>
@@ -276,5 +333,9 @@ watch(
 .usage-sub {
   font-size: 0.85rem;
   color: #6b7280;
+}
+
+.muted {
+  color: #9ca3af;
 }
 </style>

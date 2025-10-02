@@ -7,6 +7,7 @@ import type {
   DailyNutrition,
   DraftDailyNutrition,
   DraftWorkoutSession,
+  ExerciseCategory,
   ExerciseDefinition,
   HydrationPayload,
   MealType,
@@ -31,6 +32,10 @@ const normalizeLabel = (value: string) => value.trim()
 const nowIso = () => new Date().toISOString()
 
 const MEAL_TYPES: MealType[] = ['breakfast', 'lunch', 'dinner']
+const EXERCISE_CATEGORIES: ExerciseCategory[] = ['strength', 'cardio']
+const CARDIO_CALENDAR_LABEL = '有氧'
+const isValidCategory = (category: string): category is ExerciseCategory =>
+  EXERCISE_CATEGORIES.includes(category as ExerciseCategory)
 
 export const useWorkoutStore = defineStore('workout', () => {
   const isHydrated = ref(false)
@@ -66,17 +71,22 @@ export const useWorkoutStore = defineStore('workout', () => {
   const calendarSummaryByDate = computed<Record<string, CalendarDaySummary>>(() => {
     const summaries: Record<string, CalendarDaySummary> = {}
     for (const session of Object.values(sessionsByDate.value)) {
-      const uniqueBodyParts = new Set<string>()
+      const uniqueLabels = new Set<string>()
       for (const entry of session.entries) {
         const exercise = exercises.value[entry.exerciseId]
-        if (exercise?.bodyPart) {
-          uniqueBodyParts.add(exercise.bodyPart)
+        if (!exercise) {
+          continue
+        }
+        if (exercise.category === 'cardio') {
+          uniqueLabels.add(CARDIO_CALENDAR_LABEL)
+        } else if (exercise.bodyPart) {
+          uniqueLabels.add(exercise.bodyPart)
         }
       }
       summaries[session.date] = {
         date: session.date,
         hasWorkout: session.entries.length > 0,
-        bodyParts: Array.from(uniqueBodyParts).sort(),
+        bodyParts: Array.from(uniqueLabels).sort(),
         sessionId: session.id,
         isCoachSession: Boolean(session.isCoachSession),
       }
@@ -177,6 +187,15 @@ export const useWorkoutStore = defineStore('workout', () => {
     }
   }
 
+  const normalizePersistedExercise = (exercise: ExerciseDefinition): ExerciseDefinition => {
+    const category = isValidCategory(exercise.category) ? exercise.category : 'strength'
+    return {
+      ...exercise,
+      category,
+      bodyPart: category === 'strength' ? exercise.bodyPart ?? '' : undefined,
+    }
+  }
+
   const registerExercise = (payload: CreateExercisePayload): ExerciseDefinition => {
     ensureCanMutate('新增或更新訓練動作')
     const name = normalizeLabel(payload.name)
@@ -188,13 +207,24 @@ export const useWorkoutStore = defineStore('workout', () => {
       throw new Error('已有相同名稱的訓練動作，請使用其他名稱。')
     }
 
+    const category = isValidCategory(payload.category) ? payload.category : 'strength'
+
+    let bodyPart: string | undefined
+    if (category === 'strength') {
+      bodyPart = normalizeLabel(payload.bodyPart ?? '')
+      if (!bodyPart) {
+        throw new Error('請輸入身體部位。')
+      }
+    }
+
     const timestamp = nowIso()
 
     const id = generateId()
     const exercise: ExerciseDefinition = {
       id,
       name,
-      bodyPart: normalizeLabel(payload.bodyPart),
+      category,
+      bodyPart,
       createdAt: timestamp,
       updatedAt: timestamp,
     }
@@ -219,12 +249,29 @@ export const useWorkoutStore = defineStore('workout', () => {
       throw new Error('已有相同名稱的訓練動作，請使用其他名稱。')
     }
 
-    const bodyPart = normalizeLabel(payload.bodyPart)
+    const category = isValidCategory(payload.category) ? payload.category : target.category
+    if (category !== target.category) {
+      const usage = exerciseUsageById.value(target.id)
+      if (usage.entryCount > 0) {
+        throw new Error('已有訓練紀錄使用此動作，無法變更分類。')
+      }
+    }
+
+    let bodyPart: string | undefined
+    if (category === 'strength') {
+      const bodyPartInput = payload.bodyPart ?? target.bodyPart ?? ''
+      bodyPart = normalizeLabel(bodyPartInput)
+      if (!bodyPart) {
+        throw new Error('請輸入身體部位。')
+      }
+    }
+
     const timestamp = nowIso()
 
     const updated: ExerciseDefinition = {
       ...target,
       name,
+      category,
       bodyPart,
       updatedAt: timestamp,
     }
@@ -267,6 +314,23 @@ export const useWorkoutStore = defineStore('workout', () => {
         : undefined
       const entryId = entry.id ?? baseEntry?.id ?? generateId()
 
+      const exercise = exercises.value[entry.exerciseId]
+      const category = exercise?.category ?? 'strength'
+
+      if (category === 'cardio') {
+        const rawDuration = Number(entry.durationMinutes)
+        const normalizedDuration = Number.isFinite(rawDuration) ? Math.max(0, rawDuration) : 0
+        const durationMinutes = normalizedDuration > 0 ? normalizedDuration : undefined
+
+        return {
+          id: entryId,
+          exerciseId: entry.exerciseId,
+          note: entry.note?.trim() || undefined,
+          sets: [],
+          durationMinutes,
+        }
+      }
+
       const sets = entry.sets.map((set) => {
         const baseSet = set.id
           ? baseEntry?.sets.find((candidate) => candidate.id === set.id)
@@ -286,6 +350,7 @@ export const useWorkoutStore = defineStore('workout', () => {
         exerciseId: entry.exerciseId,
         note: entry.note?.trim() || undefined,
         sets,
+        durationMinutes: undefined,
       }
     })
 
@@ -333,7 +398,12 @@ export const useWorkoutStore = defineStore('workout', () => {
   }
 
   const primeFromStorage = (payload: HydrationPayload) => {
-    exercises.value = Object.fromEntries(payload.exercises.map((exercise) => [exercise.id, exercise]))
+    exercises.value = Object.fromEntries(
+      payload.exercises.map((exercise) => {
+        const normalized = normalizePersistedExercise(exercise)
+        return [normalized.id, normalized]
+      }),
+    )
     sessionsByDate.value = Object.fromEntries(payload.sessions.map((session) => [session.date, session]))
     isHydrated.value = true
   }

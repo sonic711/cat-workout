@@ -1,3 +1,5 @@
+export type ExerciseCategory = 'strength' | 'cardio'
+
 export type WeightUnit = 'kg' | 'lb'
 
 export type MealType = 'breakfast' | 'lunch' | 'dinner'
@@ -15,6 +17,7 @@ export interface WorkoutEntry {
   exerciseId: string
   note?: string
   sets: WorkoutSet[]
+  durationMinutes?: number
 }
 
 export interface NutritionItem {
@@ -44,7 +47,8 @@ export interface WorkoutSession {
 export interface ExerciseDefinition {
   id: string
   name: string
-  bodyPart: string
+  category: ExerciseCategory
+  bodyPart?: string
   createdAt: string
   updatedAt: string
 }
@@ -62,6 +66,7 @@ export interface DraftWorkoutEntry {
   exerciseId: string
   note?: string
   sets: DraftWorkoutSet[]
+  durationMinutes?: number
 }
 
 export interface DraftNutritionItem {
@@ -88,7 +93,8 @@ export interface DraftWorkoutSession {
 
 export interface CreateExercisePayload {
   name: string
-  bodyPart: string
+  category: ExerciseCategory
+  bodyPart?: string
 }
 
 export interface UpdateExercisePayload extends CreateExercisePayload {
