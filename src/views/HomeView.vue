@@ -50,6 +50,10 @@ const mealLabels: Record<MealType, string> = {
   dinner: '晚餐',
 }
 
+const isCoachDay = (dateKey: string) => Boolean(calendarSummaryByDate.value[dateKey]?.isCoachSession)
+
+const isCoachForSelectedDate = computed(() => Boolean(sessionForSelectedDate.value?.isCoachSession))
+
 const nutritionForSelectedDate = computed(() => sessionForSelectedDate.value?.nutrition ?? null)
 
 const mealTotalsForSelectedDate = computed<Record<MealType, number>>(() => {
@@ -258,7 +262,7 @@ const handleLogout = async () => {
             </template>
             <el-calendar v-model="selectedDate">
               <template #date-cell="{ data }">
-                <div class="day-cell" :class="{ 'is-selected': data.isSelected }">
+    <div class="day-cell" :class="{ 'is-selected': data.isSelected, 'is-coach': isCoachDay(data.day) }">
                   <span class="day-number">{{ Number(data.day.split('-')[2]) }}</span>
                   <div class="tag-list" v-if="bodyPartsForDay(data.day).length">
                     <el-tag
@@ -293,7 +297,14 @@ const handleLogout = async () => {
               </div>
             </template>
             <template v-if="sessionForSelectedDate">
-              <div class="session-meta" v-if="selectedBodyParts.length">
+              <div class="session-meta" v-if="selectedBodyParts.length || isCoachForSelectedDate">
+                <el-tag
+                  v-if="isCoachForSelectedDate"
+                  type="warning"
+                  effect="dark"
+                >
+                  教練課
+                </el-tag>
                 <el-tag
                   v-for="part in selectedBodyParts"
                   :key="`selected-${part}`"
@@ -525,6 +536,16 @@ const handleLogout = async () => {
 
 .day-cell.is-selected {
   background-color: rgba(64, 158, 255, 0.12);
+}
+
+.day-cell.is-coach {
+  box-shadow: inset 0 0 0 2px rgba(250, 204, 21, 0.75);
+  background-color: rgba(250, 204, 21, 0.12);
+}
+
+.day-cell.is-selected.is-coach {
+  background-color: rgba(250, 204, 21, 0.2);
+  box-shadow: inset 0 0 0 2px rgba(250, 204, 21, 0.9);
 }
 
 .day-number {

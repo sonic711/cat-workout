@@ -32,7 +32,7 @@ const emit = defineEmits<{
 const workoutStore = useWorkoutStore()
 const { exercises } = storeToRefs(workoutStore)
 
-type SessionDraft = DraftWorkoutSession & { nutrition: DraftDailyNutrition }
+type SessionDraft = DraftWorkoutSession & { nutrition: DraftDailyNutrition; isCoachSession: boolean }
 
 const isVisible = computed({
   get: () => props.modelValue,
@@ -80,6 +80,7 @@ function createEmptyDraft(): SessionDraft {
     note: '',
     entries: [],
     nutrition: createEmptyNutritionDraft(),
+    isCoachSession: false,
   }
 }
 
@@ -145,6 +146,7 @@ const hydrateDraft = () => {
         }
         return nutritionDraft
       })(),
+      isCoachSession: Boolean(props.session?.isCoachSession),
     }
   } else {
     draft.value = createEmptyDraft()
@@ -328,6 +330,7 @@ const sanitizeDraft = (): DraftWorkoutSession => ({
       dinner: [],
     }),
   },
+  isCoachSession: draft.value.isCoachSession,
 })
 
 const validateDraft = () => {
@@ -455,6 +458,11 @@ const handleDelete = async () => {
           placeholder="訓練筆記"
           :disabled="isReadOnly"
         />
+        <div class="session-flags">
+          <el-checkbox v-model="draft.isCoachSession" :disabled="isReadOnly">
+            教練課
+          </el-checkbox>
+        </div>
       </div>
 
       <div class="entries-section">
@@ -672,6 +680,11 @@ const handleDelete = async () => {
 .session-date {
   font-weight: 600;
   color: #1f2933;
+}
+
+.session-flags {
+  display: flex;
+  justify-content: flex-end;
 }
 
 .entries-section {

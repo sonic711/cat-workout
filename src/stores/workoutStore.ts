@@ -78,6 +78,7 @@ export const useWorkoutStore = defineStore('workout', () => {
         hasWorkout: session.entries.length > 0,
         bodyParts: Array.from(uniqueBodyParts).sort(),
         sessionId: session.id,
+        isCoachSession: Boolean(session.isCoachSession),
       }
     }
     return summaries
@@ -298,6 +299,7 @@ export const useWorkoutStore = defineStore('workout', () => {
       createdAt: existingSession?.createdAt ?? timestamp,
       updatedAt: timestamp,
       nutrition: normalizedNutrition,
+      isCoachSession: Boolean(draft.isCoachSession),
     }
 
     sessionsByDate.value[dateKey] = session

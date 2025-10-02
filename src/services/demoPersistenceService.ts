@@ -123,6 +123,7 @@ const createSeedHydration = (): HydrationPayload => {
         ],
         createdAt: now,
         updatedAt: now,
+        isCoachSession: true,
       },
       {
         id: `session-${today}`,
@@ -141,6 +142,7 @@ const createSeedHydration = (): HydrationPayload => {
         nutrition,
         createdAt: now,
         updatedAt: now,
+        isCoachSession: false,
       },
       {
         id: `session-${pullDay}`,
@@ -158,6 +160,7 @@ const createSeedHydration = (): HydrationPayload => {
         ],
         createdAt: now,
         updatedAt: now,
+        isCoachSession: false,
       },
     ],
   }

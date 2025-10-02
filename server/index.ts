@@ -21,6 +21,7 @@ interface SessionRow {
   date: string | Date
   note: string | null
   waterMl: number | null
+  isCoachSession: number | null
   createdAt: Date | string
   updatedAt: Date | string
 }
@@ -99,6 +100,7 @@ interface WorkoutSession {
   createdAt: string
   updatedAt: string
   nutrition?: DailyNutrition
+  isCoachSession?: boolean
 }
 
 interface HydrationPayload {
@@ -135,7 +137,7 @@ const resolveEnv = (): MysqlConfig => {
   }
 
   return {
-    host: process.env.MYSQL_HOST ?? '152.69.193.219',
+    host: process.env.MYSQL_HOST ?? '10.0.0.135',
     port: Number(process.env.MYSQL_PORT ?? '3306'),
     user: process.env.MYSQL_USER ?? 'user',
     password: process.env.MYSQL_PASSWORD ?? 'userpassword',
@@ -206,6 +208,7 @@ const ensureSchema = async () => {
         date DATE NOT NULL,
         note TEXT NULL,
         water_ml INT UNSIGNED NOT NULL DEFAULT 0,
+        is_coach_session TINYINT(1) NOT NULL DEFAULT 0,
         created_at DATETIME(6) NOT NULL,
         updated_at DATETIME(6) NOT NULL,
         PRIMARY KEY (tenant_id, id),
@@ -214,6 +217,15 @@ const ensureSchema = async () => {
     )
     await connection
       .query('ALTER TABLE sessions ADD COLUMN water_ml INT UNSIGNED NOT NULL DEFAULT 0 AFTER note')
+      .catch((error) => {
+        if (!isDuplicateColumnError(error)) {
+          throw error
+        }
+      })
+    await connection
+      .query(
+        'ALTER TABLE sessions ADD COLUMN is_coach_session TINYINT(1) NOT NULL DEFAULT 0 AFTER water_ml',
+      )
       .catch((error) => {
         if (!isDuplicateColumnError(error)) {
           throw error
@@ -279,13 +291,14 @@ const mapExerciseRow = (row: ExerciseRow): ExerciseDefinition => ({
 
 const mapSessionRow = (
   row: SessionRow,
-): Omit<WorkoutSession, 'entries' | 'nutrition'> & { waterIntakeMl: number } => ({
+): Omit<WorkoutSession, 'entries' | 'nutrition'> & { waterIntakeMl: number; isCoachSession: boolean } => ({
   id: row.id,
   date: normalizeDateFromDb(row.date, `session(${row.id}).date`),
   note: row.note ?? undefined,
   createdAt: normalizeTimestampFromDb(row.createdAt, `session(${row.id}).createdAt`),
   updatedAt: normalizeTimestampFromDb(row.updatedAt, `session(${row.id}).updatedAt`),
   waterIntakeMl: typeof row.waterMl === 'number' ? Number(row.waterMl) : 0,
+  isCoachSession: Boolean(row.isCoachSession),
 })
 
 const validateExercises = (payload: unknown): payload is ExerciseDefinition[] => {
@@ -346,6 +359,10 @@ const validateSessions = (payload: unknown): payload is WorkoutSession[] => {
       return false
     }
 
+    if (session.isCoachSession != null && typeof session.isCoachSession !== 'boolean') {
+      return false
+    }
+
     if (!session.nutrition) {
       return true
     }
@@ -402,7 +419,7 @@ const buildHydration = async (tenantId: string): Promise<HydrationPayload> => {
     [tenantId],
   )
   const [sessionRows] = await pool.query<SessionRow[]>(
-    'SELECT id, date, note, water_ml AS waterMl, created_at AS createdAt, updated_at AS updatedAt FROM sessions WHERE tenant_id = ? ORDER BY date',
+    'SELECT id, date, note, water_ml AS waterMl, is_coach_session AS isCoachSession, created_at AS createdAt, updated_at AS updatedAt FROM sessions WHERE tenant_id = ? ORDER BY date',
     [tenantId],
   )
   const [entryRows] = await pool.query<SessionEntryRow[]>(
@@ -594,14 +611,15 @@ app.put('/api/sessions', async (req: Request, res: Response) => {
 
       for (const session of sessions) {
         await connection.query(
-          `INSERT INTO sessions (tenant_id, id, date, note, water_ml, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO sessions (tenant_id, id, date, note, water_ml, is_coach_session, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             tenantId,
             session.id,
             prepareDateForDb(session.date, `session(${session.id}).date`),
             session.note ?? null,
             session.nutrition?.waterIntakeMl ?? 0,
+            session.isCoachSession ? 1 : 0,
             prepareTimestampForDb(session.createdAt, `session(${session.id}).createdAt`),
             prepareTimestampForDb(session.updatedAt, `session(${session.id}).updatedAt`),
           ],

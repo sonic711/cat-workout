@@ -38,6 +38,7 @@ export interface WorkoutSession {
   createdAt: string
   updatedAt: string
   nutrition?: DailyNutrition
+  isCoachSession?: boolean
 }
 
 export interface ExerciseDefinition {
@@ -82,6 +83,7 @@ export interface DraftWorkoutSession {
   note?: string
   entries: DraftWorkoutEntry[]
   nutrition?: DraftDailyNutrition
+  isCoachSession?: boolean
 }
 
 export interface CreateExercisePayload {
@@ -98,6 +100,7 @@ export interface CalendarDaySummary {
   hasWorkout: boolean
   bodyParts: string[]
   sessionId?: string
+  isCoachSession?: boolean
 }
 
 export interface HydrationPayload {
