@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { ElMessage } from 'element-plus'
 
@@ -19,6 +19,8 @@ const isExerciseManagerVisible = ref(false)
 const loginUsername = ref('')
 const loginPassword = ref('')
 const isLoggingIn = ref(false)
+const detailSectionRef = ref<HTMLElement | null>(null)
+const shouldScrollToDetail = ref(false)
 
 const formatDateKey = (date: Date) => {
   const year = date.getFullYear()
@@ -98,6 +100,19 @@ const hasNutritionForSelectedDate = computed(() => {
   return mealTypes.some((mealType) => nutrition.meals[mealType].length > 0)
 })
 
+const scrollDetailIntoView = async () => {
+  await nextTick()
+  detailSectionRef.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
+const handleCalendarDateClick = (day: string) => {
+  shouldScrollToDetail.value = true
+  if (day === selectedDateKey.value) {
+    shouldScrollToDetail.value = false
+    void scrollDetailIntoView()
+  }
+}
+
 const openEditor = () => {
   if (!authStore.canEdit) {
     ElMessage.info('目前為唯讀模式，請輸入帳號與密碼以編輯訓練內容。')
@@ -154,6 +169,14 @@ watch(
   },
 )
 
+watch(selectedDate, async () => {
+  if (!shouldScrollToDetail.value) {
+    return
+  }
+  shouldScrollToDetail.value = false
+  await scrollDetailIntoView()
+})
+
 const handleLogin = async () => {
   if (isLoggingIn.value) {
     return
@@ -191,10 +214,10 @@ const handleLogout = async () => {
 
 <template>
   <el-container class="home-layout">
-    <el-header class="home-header">
+    <el-header :class="['home-header', { 'home-header--compact': authStore.isLoggedIn }]">
       <h1>健身日誌月曆</h1>
       <p>快速概覽每一天的訓練安排，並為選定日期管理日誌內容。</p>
-      <div class="auth-panel">
+      <div :class="['auth-panel', { 'auth-panel--compact': authStore.isLoggedIn }]">
         <template v-if="authStore.isLoggedIn">
           <div class="auth-status">
             <span>
@@ -262,7 +285,11 @@ const handleLogout = async () => {
             </template>
             <el-calendar v-model="selectedDate">
               <template #date-cell="{ data }">
-    <div class="day-cell" :class="{ 'is-selected': data.isSelected, 'is-coach': isCoachDay(data.day) }">
+                <div
+                  class="day-cell"
+                  :class="{ 'is-selected': data.isSelected, 'is-coach': isCoachDay(data.day) }"
+                  @click="handleCalendarDateClick(data.day)"
+                >
                   <span class="day-number">{{ Number(data.day.split('-')[2]) }}</span>
                   <div class="tag-list" v-if="bodyPartsForDay(data.day).length">
                     <el-tag
@@ -281,7 +308,8 @@ const handleLogout = async () => {
           </el-card>
         </el-col>
         <el-col :xs="24" :lg="10">
-          <el-card class="detail-card">
+          <div ref="detailSectionRef" class="detail-section">
+            <el-card class="detail-card">
             <template #header>
               <div class="card-header">
                 <span>選取日期：{{ formattedSelectedDate }}</span>
@@ -414,7 +442,8 @@ const handleLogout = async () => {
                 <el-empty description="尚未紀錄今日飲食" class="nutrition-placeholder" />
               </div>
             </template>
-          </el-card>
+            </el-card>
+          </div>
         </el-col>
       </el-row>
       </div>
@@ -450,6 +479,7 @@ const handleLogout = async () => {
   border-bottom: 1px solid rgba(180, 198, 255, 0.4);
   align-items: center;
   text-align: center;
+  transition: padding 0.3s ease;
 }
 
 .home-header h1 {
@@ -459,18 +489,50 @@ const handleLogout = async () => {
   color: #1f2933;
 }
 
+.home-header--compact {
+  padding: 1.5rem 1.5rem;
+  align-items: flex-start;
+  text-align: left;
+  gap: 0.35rem;
+}
+
+.home-header--compact h1 {
+  font-size: clamp(1.4rem, 1.6vw + 1rem, 1.9rem);
+}
+
 .auth-panel {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 0.5rem;
   margin-top: 0.5rem;
+  transition: all 0.3s ease;
 }
 
 .auth-status {
   display: flex;
   align-items: center;
   gap: 0.75rem;
+}
+
+.auth-panel--compact {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  max-width: 720px;
+  margin-top: 0.25rem;
+  align-self: flex-end;
+}
+
+.auth-panel--compact .auth-status {
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.auth-panel--compact .auth-actions {
+  flex-wrap: wrap;
 }
 
 .auth-actions {
@@ -491,6 +553,12 @@ const handleLogout = async () => {
   margin: 0;
   font-size: 0.85rem;
   color: #4b5563;
+  max-width: 360px;
+  text-align: center;
+}
+
+.home-header--compact .login-hint {
+  display: none;
 }
 
 .home-header p {
@@ -498,6 +566,10 @@ const handleLogout = async () => {
   max-width: 560px;
   color: #3e4c59;
   line-height: 1.6;
+}
+
+.home-header--compact p {
+  text-align: left;
 }
 
 .home-main {
@@ -509,6 +581,10 @@ const handleLogout = async () => {
 .home-content {
   width: 100%;
   max-width: 1200px;
+}
+
+.detail-section {
+  scroll-margin-top: 96px;
 }
 
 .calendar-card,
