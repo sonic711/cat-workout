@@ -1,250 +1,105 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, onMounted } from 'vue'
 import { storeToRefs } from 'pinia'
-import { ElMessage } from 'element-plus'
 import { Timer } from '@element-plus/icons-vue'
 
 import WorkoutSessionEditor from '@/components/workout/WorkoutSessionEditor.vue'
 import ExerciseManager from '@/components/workout/ExerciseManager.vue'
-import { useWorkoutStore } from '@/stores/workoutStore'
+import { useHomeAuth } from '@/composables/home/useHomeAuth'
+import { useHomeCalendar } from '@/composables/home/useHomeCalendar'
+import { useHomeDialogs } from '@/composables/home/useHomeDialogs'
+import { useHomeNutritionSummary } from '@/composables/home/useHomeNutritionSummary'
+import { useHomeSessionDisplay } from '@/composables/home/useHomeSessionDisplay'
 import { useAuthStore } from '@/stores/authStore'
-import type { ExerciseCategory, MealType, WorkoutSession } from '@/types/workout'
+import { useWorkoutStore } from '@/stores/workoutStore'
 
 const workoutStore = useWorkoutStore()
-const { calendarSummaryByDate, sessionByDate, sessionDates, exercises } = storeToRefs(workoutStore)
 const authStore = useAuthStore()
 
-const selectedDate = ref(new Date())
-const isEditorVisible = ref(false)
-const isExerciseManagerVisible = ref(false)
-const loginUsername = ref('')
-const loginPassword = ref('')
-const isLoggingIn = ref(false)
-const detailSectionRef = ref<HTMLElement | null>(null)
-const shouldScrollToDetail = ref(false)
+// Expose reactive primitives from the stores so downstream composables stay in sync.
+const { calendarSummaryByDate, sessionByDate, sessionDates, exercises, isHydrated } = storeToRefs(workoutStore)
+const { canEdit, isLoggedIn } = storeToRefs(authStore)
 
-const formatDateKey = (date: Date) => {
-  const year = date.getFullYear()
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
-}
+// Calendar-focused state and helpers (selection, hydration, scroll behavior).
+const {
+  bodyPartsForDay,
+  detailSectionRef,
+  ensureHydrated,
+  formattedSelectedDate,
+  handleCalendarDateClick,
+  resetSelection,
+  selectedBodyParts,
+  selectedDate,
+  selectedDateKey,
+  selectedSummary,
+  sessionForSelectedDate,
+} = useHomeCalendar({
+  calendarSummaryByDate,
+  sessionByDate,
+  sessionDates,
+  hydrateFromPersistence: workoutStore.hydrateFromPersistence,
+})
 
-const selectedDateKey = computed(() => formatDateKey(selectedDate.value))
-const formattedSelectedDate = computed(() => selectedDate.value.toLocaleDateString())
-const selectedSummary = computed(() => calendarSummaryByDate.value[selectedDateKey.value])
-const selectedBodyParts = computed(() => selectedSummary.value?.bodyParts ?? [])
-const bodyPartsForDay = (dateKey: string) => calendarSummaryByDate.value[dateKey]?.bodyParts ?? []
+// Workout entry formatting utilities for the detail pane.
+const {
+  entryHasSetNote,
+  formatEntrySummary,
+  getExerciseBodyPartLabel,
+  getExerciseName,
+  isCardioEntry,
+} = useHomeSessionDisplay({
+  sessionForSelectedDate,
+  exercises,
+})
 
-const sessionForSelectedDate = computed(() => sessionByDate.value(selectedDateKey.value))
+// Nutrition summary derived from the selected session.
+const {
+  hasNutritionForSelectedDate,
+  mealLabels,
+  mealTotalsForSelectedDate,
+  mealTypes,
+  mealsForSelectedDate,
+  nutritionForSelectedDate,
+  totalCaloriesForSelectedDate,
+  waterIntakeForSelectedDate,
+} = useHomeNutritionSummary(sessionForSelectedDate)
 
-type WorkoutEntry = WorkoutSession['entries'][number]
+// UI dialog toggles guarded by permissions.
+const {
+  closeEditor,
+  isEditorVisible,
+  isExerciseManagerVisible,
+  openEditor,
+  openExerciseManager,
+} = useHomeDialogs({
+  canEdit,
+  isLoggedIn,
+  isHydrated,
+  ensureHydrated,
+})
 
-const CATEGORY_LABELS: Record<ExerciseCategory, string> = {
-  strength: '重量訓練',
-  cardio: '有氧運動',
-}
-
-const getExerciseById = (exerciseId: string) => exercises.value[exerciseId]
-
-const getExerciseName = (exerciseId: string) => getExerciseById(exerciseId)?.name ?? '未命名動作'
-
-const getExerciseCategory = (exerciseId: string): ExerciseCategory =>
-  getExerciseById(exerciseId)?.category ?? 'strength'
-
-const isCardioEntry = (entry: WorkoutEntry) => getExerciseCategory(entry.exerciseId) === 'cardio'
-
-const getExerciseBodyPartLabel = (exerciseId: string) => {
-  const exercise = getExerciseById(exerciseId)
-  if (!exercise) {
-    return '未分類'
-  }
-  if (exercise.category === 'cardio') {
-    return CATEGORY_LABELS.cardio
-  }
-  return exercise.bodyPart?.trim() || '未分類'
-}
-
-const entryHasSetNote = (entry: WorkoutEntry) => !isCardioEntry(entry) && entry.sets.some((set) => Boolean(set.note?.trim()))
-
-const formatEntrySummary = (entry: WorkoutEntry) => {
-  if (isCardioEntry(entry)) {
-    const duration = Number(entry.durationMinutes)
-    if (!Number.isFinite(duration) || duration <= 0) {
-      return '時長 0 分鐘'
-    }
-    return `時長 ${duration} 分鐘`
-  }
-  return `共 ${entry.sets.length} 組`
-}
-
-const mealTypes: MealType[] = ['breakfast', 'lunch', 'dinner']
-
-const mealLabels: Record<MealType, string> = {
-  breakfast: '早餐',
-  lunch: '午餐',
-  dinner: '晚餐',
-}
+// Authentication flow wiring (login, logout, initial hydration).
+const {
+  handleLogin,
+  handleLogout,
+  initializeAuth,
+  isLoggingIn,
+  loginPassword,
+  loginUsername,
+} = useHomeAuth({
+  authStore,
+  ensureHydrated,
+  resetSelection,
+})
 
 const isCoachDay = (dateKey: string) => Boolean(calendarSummaryByDate.value[dateKey]?.isCoachSession)
-
 const isCoachForSelectedDate = computed(() => Boolean(sessionForSelectedDate.value?.isCoachSession))
 
-const nutritionForSelectedDate = computed(() => sessionForSelectedDate.value?.nutrition ?? null)
-
-const mealTotalsForSelectedDate = computed<Record<MealType, number>>(() => {
-  const totals: Record<MealType, number> = {
-    breakfast: 0,
-    lunch: 0,
-    dinner: 0,
-  }
-  const nutrition = nutritionForSelectedDate.value
-  if (!nutrition) {
-    return totals
-  }
-  for (const mealType of mealTypes) {
-    totals[mealType] = nutrition.meals[mealType].reduce((sum, item) => sum + item.calories, 0)
-  }
-  return totals
-})
-
-const totalCaloriesForSelectedDate = computed(() =>
-  mealTypes.reduce((sum, mealType) => sum + mealTotalsForSelectedDate.value[mealType], 0),
-)
-
-const waterIntakeForSelectedDate = computed(() => nutritionForSelectedDate.value?.waterIntakeMl ?? 0)
-
-const mealsForSelectedDate = computed(() =>
-  mealTypes.map((mealType) => ({
-    mealType,
-    label: mealLabels[mealType],
-    items: nutritionForSelectedDate.value?.meals[mealType] ?? [],
-    calories: mealTotalsForSelectedDate.value[mealType],
-  })),
-)
-
-const hasNutritionForSelectedDate = computed(() => {
-  const nutrition = nutritionForSelectedDate.value
-  if (!nutrition) {
-    return false
-  }
-  if (nutrition.waterIntakeMl > 0) {
-    return true
-  }
-  return mealTypes.some((mealType) => nutrition.meals[mealType].length > 0)
-})
-
-const scrollDetailIntoView = async () => {
-  await nextTick()
-  detailSectionRef.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-}
-
-const handleCalendarDateClick = (day: string) => {
-  shouldScrollToDetail.value = true
-  if (day === selectedDateKey.value) {
-    shouldScrollToDetail.value = false
-    void scrollDetailIntoView()
-  }
-}
-
-const openEditor = () => {
-  if (!authStore.canEdit) {
-    ElMessage.info('目前為唯讀模式，請輸入帳號與密碼以編輯訓練內容。')
-    return
-  }
-  if (!workoutStore.isHydrated) {
-    void ensureHydrated()
-  }
-  isEditorVisible.value = true
-}
-
-const closeEditor = () => {
-  isEditorVisible.value = false
-}
-
-const openExerciseManager = () => {
-  if (!authStore.isLoggedIn) {
-    ElMessage.info('請先登入以瀏覽訓練動作清單。')
-    return
-  }
-  isExerciseManagerVisible.value = true
-}
-
-const resetSelection = () => {
-  selectedDate.value = new Date()
-}
-
-const ensureHydrated = async () => {
-  const hydration = await workoutStore.hydrateFromPersistence()
-
-  const todayKey = formatDateKey(new Date())
-  if (sessionByDate.value(todayKey)) {
-    selectedDate.value = new Date(`${todayKey}T00:00:00`)
-    return
-  }
-
-  const fallbackDate = hydration?.sessions[0]?.date ?? sessionDates.value[0]
-  if (fallbackDate) {
-    selectedDate.value = new Date(`${fallbackDate}T00:00:00`)
-  }
-}
-
 onMounted(() => {
-  void authStore.initialize().then(() => ensureHydrated())
+  void initializeAuth()
 })
-
-watch(
-  () => authStore.username,
-  async (value) => {
-    if (value) {
-      resetSelection()
-      await ensureHydrated()
-    }
-  },
-)
-
-watch(selectedDate, async () => {
-  if (!shouldScrollToDetail.value) {
-    return
-  }
-  shouldScrollToDetail.value = false
-  await scrollDetailIntoView()
-})
-
-const handleLogin = async () => {
-  if (isLoggingIn.value) {
-    return
-  }
-  isLoggingIn.value = true
-  try {
-    const trimmedUsername = loginUsername.value.trim()
-    const success = await authStore.login({
-      username: trimmedUsername,
-      password: loginPassword.value || undefined,
-    })
-    if (success) {
-      loginUsername.value = trimmedUsername
-      loginPassword.value = ''
-      await ensureHydrated()
-      ElMessage.success(
-        authStore.canEdit ? '登入成功，已啟用編輯權限。' : '已切換為唯讀模式，可瀏覽個人訓練紀錄。',
-      )
-    } else if (authStore.lastError) {
-      ElMessage.error(authStore.lastError)
-    }
-  } finally {
-    isLoggingIn.value = false
-  }
-}
-
-const handleLogout = async () => {
-  await authStore.logout()
-  loginPassword.value = ''
-  ElMessage.info('已登出，回到訪客模式。')
-  resetSelection()
-  await ensureHydrated()
-}
 </script>
+
 
 <template>
   <el-container class="home-layout">

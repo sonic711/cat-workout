@@ -1,21 +1,13 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
+import { useSessionDraft } from '@/composables/sessionEditor/useSessionDraft'
+import { useExerciseDialog } from '@/composables/sessionEditor/useExerciseDialog'
+import type { SessionDraft } from '@/composables/sessionEditor/useSessionDraft'
 import { useWorkoutStore } from '@/stores/workoutStore'
-import type {
-  DraftDailyNutrition,
-  DraftNutritionItem,
-  DraftWorkoutEntry,
-  DraftWorkoutSession,
-  DraftWorkoutSet,
-  ExerciseCategory,
-  ExerciseDefinition,
-  MealType,
-  WeightUnit,
-  WorkoutSession,
-} from '@/types/workout'
+import type { ExerciseDefinition, MealType, WorkoutSession } from '@/types/workout'
 
 interface Props {
   modelValue: boolean
@@ -34,8 +26,7 @@ const emit = defineEmits<{
 const workoutStore = useWorkoutStore()
 const { exercises } = storeToRefs(workoutStore)
 
-type SessionDraft = DraftWorkoutSession & { nutrition: DraftDailyNutrition; isCoachSession: boolean }
-
+// Dialog visibility and permission flags.
 const isVisible = computed({
   get: () => props.modelValue,
   set: (value) => emit('update:modelValue', value),
@@ -43,78 +34,102 @@ const isVisible = computed({
 
 const isReadOnly = computed(() => !props.canEdit)
 
-const exerciseDialogVisible = ref(false)
-const exerciseDialogTargetEntry = ref<number | null>(null)
+const dateRef = computed(() => props.date)
+const sessionRef = computed(() => props.session)
 
-const newExerciseForm = reactive({
-  name: '',
-  bodyPart: '',
-  category: 'strength' as ExerciseCategory,
+// Draft manager centralizes entry/set/nutrition manipulation.
+const {
+  addEntry,
+  addMealItem,
+  addSet,
+  draft,
+  exerciseOptions,
+  formatWeightLabel,
+  getWeightOptions,
+  handleEntryExerciseChange: doSyncEntry,
+  hydrateDraft,
+  isCardioEntry,
+  mealLabels,
+  mealTotals,
+  mealTypes,
+  removeEntry,
+  removeMealItem,
+  removeSet,
+  repOptions,
+  sanitizeDraft,
+  totalCalories,
+} = useSessionDraft({
+  date: dateRef,
+  session: sessionRef,
+  exercises,
 })
 
-const CATEGORY_LABELS: Record<ExerciseCategory, string> = {
-  strength: '重量訓練',
-  cardio: '有氧運動',
+// Local exercise dialog used to add new moves without leaving the editor.
+const {
+  CATEGORY_LABELS,
+  categoryOptions,
+  exerciseDialogTargetEntry,
+  exerciseDialogVisible,
+  isNewExerciseStrength,
+  newExerciseForm,
+  openExerciseDialog,
+  resetExerciseDialog,
+} = useExerciseDialog({
+  isReadOnly,
+})
+
+const closeDialog = () => {
+  emit('update:modelValue', false)
 }
 
-const categoryOptions: { value: ExerciseCategory; label: string }[] = [
-  { value: 'strength', label: CATEGORY_LABELS.strength },
-  { value: 'cardio', label: CATEGORY_LABELS.cardio },
-]
-
-const isNewExerciseStrength = computed(() => newExerciseForm.category === 'strength')
-
-const mealTypes: MealType[] = ['breakfast', 'lunch', 'dinner']
-
-const mealLabels: Record<MealType, string> = {
-  breakfast: '早餐',
-  lunch: '午餐',
-  dinner: '晚餐',
+const showReadOnlyInfo = () => {
+  ElMessage.info('目前為唯讀模式，請以完整登入取得編輯權限。')
 }
 
-const createRange = (start: number, end: number, step: number): number[] => {
-  const values: number[] = []
-  const decimals = Math.max(0, (step.toString().split('.')[1]?.length ?? 0))
-  for (let current = start; current <= end + step / 2; current += step) {
-    values.push(Number(current.toFixed(decimals)))
+// Prevent unintended writes when the editor is opened in view-only mode.
+const guardMutation = (callback: () => void) => {
+  if (isReadOnly.value) {
+    showReadOnlyInfo()
+    return
   }
-  return values
+  callback()
 }
 
-const weightOptionsByUnit: Record<WeightUnit, number[]> = {
-  kg: createRange(0, 200, 0.5),
-  lb: createRange(0, 440, 1),
+type DraftEntry = SessionDraft['entries'][number]
+
+const handleEntryExerciseChange = (entry: DraftEntry) => {
+  guardMutation(() => doSyncEntry(entry))
 }
 
-const repOptions = Array.from({ length: 50 }, (_, index) => index + 1)
+const handleAddEntry = () => guardMutation(addEntry)
 
-const formatWeightLabel = (value: number): string => (Number.isInteger(value) ? `${value}` : value.toFixed(1))
+const handleRemoveEntry = (index: number) => {
+  guardMutation(() => removeEntry(index))
+}
 
-const getWeightOptions = (unit: WeightUnit): number[] => weightOptionsByUnit[unit]
+const handleAddSet = (entry: DraftEntry) => {
+  guardMutation(() => addSet(entry))
+}
 
-const createEmptyNutritionDraft = (): DraftDailyNutrition => ({
-  waterIntakeMl: 0,
-  meals: {
-    breakfast: [],
-    lunch: [],
-    dinner: [],
-  },
-})
+const handleRemoveSet = (entry: DraftEntry, index: number) => {
+  guardMutation(() => removeSet(entry, index))
+}
 
-const createEmptyMealItem = (mealType: MealType): DraftNutritionItem => ({
-  mealType,
-  name: '',
-  calories: 0,
-})
+const handleAddMealItem = (mealType: MealType) => {
+  guardMutation(() => addMealItem(mealType))
+}
 
-const exerciseOptions = computed<ExerciseDefinition[]>(() => Object.values(exercises.value))
+const handleRemoveMealItem = (mealType: MealType, index: number) => {
+  guardMutation(() => removeMealItem(mealType, index))
+}
 
-const getExerciseById = (exerciseId: string): ExerciseDefinition | undefined => exercises.value[exerciseId]
-
-const getExerciseCategory = (exerciseId: string): ExerciseCategory =>
-  getExerciseById(exerciseId)?.category ?? 'strength'
-
-const isCardioEntry = (entry: DraftWorkoutEntry) => getExerciseCategory(entry.exerciseId) === 'cardio'
+const handleOpenExerciseDialog = (entryIndex: number) => {
+  if (isReadOnly.value) {
+    showReadOnlyInfo()
+    return
+  }
+  openExerciseDialog(entryIndex)
+}
 
 const formatExerciseOptionLabel = (exercise: ExerciseDefinition): string => {
   if (exercise.category === 'cardio') {
@@ -124,221 +139,16 @@ const formatExerciseOptionLabel = (exercise: ExerciseDefinition): string => {
   return bodyPart?.length ? `${exercise.name}（${bodyPart}）` : exercise.name
 }
 
-const ensureStrengthSets = (entry: DraftWorkoutEntry) => {
-  if (!entry.sets.length) {
-    entry.sets.push(createEmptySet())
-  }
-}
-
-const syncEntryWithExercise = (entry: DraftWorkoutEntry) => {
-  const category = getExerciseCategory(entry.exerciseId)
-  if (category === 'cardio') {
-    entry.sets = []
-    const duration = Number(entry.durationMinutes)
-    if (!Number.isFinite(duration) || duration <= 0) {
-      entry.durationMinutes = DEFAULT_CARDIO_DURATION
-    } else {
-      entry.durationMinutes = Math.round(duration)
-    }
-  } else {
-    ensureStrengthSets(entry)
-    entry.durationMinutes = 0
-  }
-}
-
-const handleEntryExerciseChange = (entry: DraftWorkoutEntry) => {
-  syncEntryWithExercise(entry)
-}
-
-function createEmptyDraft(): SessionDraft {
-  return {
-    date: props.date,
-    note: '',
-    entries: [],
-    nutrition: createEmptyNutritionDraft(),
-    isCoachSession: false,
-  }
-}
-
-const draft = ref<SessionDraft>(createEmptyDraft())
-
-const mealTotals = computed<Record<MealType, number>>(() => {
-  const totals: Record<MealType, number> = {
-    breakfast: 0,
-    lunch: 0,
-    dinner: 0,
-  }
-  for (const mealType of mealTypes) {
-    totals[mealType] = draft.value.nutrition.meals[mealType].reduce((sum, item) => {
-      const value = Number(item.calories)
-      return sum + (Number.isFinite(value) ? value : 0)
-    }, 0)
-  }
-
-  return totals
-})
-
-const totalCalories = computed(() => mealTypes.reduce((sum, type) => sum + mealTotals.value[type], 0))
-
-const createEmptySet = (): DraftWorkoutSet => ({
-  weight: 0,
-  unit: 'kg',
-  reps: 0,
-  note: '',
-})
-
-const DEFAULT_CARDIO_DURATION = 30
-
-watch(
-  () => newExerciseForm.category,
-  (value) => {
-    if (value === 'cardio') {
-      newExerciseForm.bodyPart = ''
-    }
-  },
-)
-
-const hydrateDraft = () => {
-  if (props.session) {
-    draft.value = {
-      id: props.session.id,
-      date: props.session.date,
-      note: props.session.note ?? '',
-      entries: props.session.entries.map((entry) => ({
-        id: entry.id,
-        exerciseId: entry.exerciseId,
-        note: entry.note ?? '',
-        sets: entry.sets.map((set) => ({
-          id: set.id,
-          weight: set.weight,
-          unit: set.unit,
-          reps: set.reps,
-          note: set.note ?? '',
-        })),
-        durationMinutes: entry.durationMinutes ?? 0,
-      })),
-      nutrition: (() => {
-        const nutritionDraft = createEmptyNutritionDraft()
-        const source = props.session?.nutrition
-        if (source) {
-          nutritionDraft.waterIntakeMl = source.waterIntakeMl
-          for (const mealType of mealTypes) {
-            nutritionDraft.meals[mealType] = source.meals[mealType].map((item) => ({
-              id: item.id,
-              mealType,
-              name: item.name,
-              calories: item.calories,
-              note: item.note ?? '',
-            }))
-          }
-        }
-        return nutritionDraft
-      })(),
-      isCoachSession: Boolean(props.session?.isCoachSession),
-    }
-  } else {
-    draft.value = createEmptyDraft()
-  }
-
-  draft.value.entries.forEach((entry) => {
-    if (!entry.sets.length) {
-      entry.sets = []
-    }
-    syncEntryWithExercise(entry)
-  })
-}
-
-const createEmptyEntry = (): DraftWorkoutEntry => ({
-  exerciseId: '',
-  note: '',
-  sets: [createEmptySet()],
-  durationMinutes: 0,
-})
-
-const closeDialog = () => {
-  emit('update:modelValue', false)
-}
-
-const guardMutation = (callback: () => void) => {
-  if (isReadOnly.value) {
-    ElMessage.info('目前為唯讀模式，請以完整登入取得編輯權限。')
-    return
-  }
-  callback()
-}
-
-const handleAddEntry = () => {
-  guardMutation(() => {
-    draft.value.entries.push(createEmptyEntry())
-  })
-}
-
-const handleRemoveEntry = (index: number) => {
-  guardMutation(() => {
-    draft.value.entries.splice(index, 1)
-  })
-}
-
-const handleAddSet = (entry: DraftWorkoutEntry) => {
-  guardMutation(() => {
-    if (isCardioEntry(entry)) {
-      return
-    }
-    entry.sets.push(createEmptySet())
-  })
-}
-
-const handleRemoveSet = (entry: DraftWorkoutEntry, index: number) => {
-  guardMutation(() => {
-    if (isCardioEntry(entry)) {
-      entry.sets = []
-      return
-    }
-    entry.sets.splice(index, 1)
-    if (!entry.sets.length) {
-      entry.sets.push(createEmptySet())
-    }
-  })
-}
-
-const handleAddMealItem = (mealType: MealType) => {
-  guardMutation(() => {
-    draft.value.nutrition.meals[mealType].push(createEmptyMealItem(mealType))
-  })
-}
-
-const handleRemoveMealItem = (mealType: MealType, index: number) => {
-  guardMutation(() => {
-    const targetMeals = draft.value.nutrition.meals[mealType]
-    targetMeals.splice(index, 1)
-  })
-}
-
-const resetExerciseDialog = () => {
-  newExerciseForm.name = ''
-  newExerciseForm.bodyPart = ''
-  newExerciseForm.category = 'strength'
-  exerciseDialogTargetEntry.value = null
-}
-
-const openExerciseDialog = (entryIndex: number) => {
-  if (isReadOnly.value) {
-    ElMessage.info('目前為唯讀模式，請以完整登入取得編輯權限。')
-    return
-  }
-  exerciseDialogTargetEntry.value = entryIndex
-  exerciseDialogVisible.value = true
-}
-
 const handleCreateExercise = () => {
   if (isReadOnly.value) {
-    ElMessage.info('目前為唯讀模式，請以完整登入取得編輯權限。')
+    showReadOnlyInfo()
     return
   }
 
   const name = newExerciseForm.name.trim()
   const category = newExerciseForm.category
   const bodyPart = newExerciseForm.bodyPart.trim()
+
   if (!name) {
     ElMessage.error('請輸入動作名稱')
     return
@@ -347,6 +157,7 @@ const handleCreateExercise = () => {
     ElMessage.error('請輸入身體部位')
     return
   }
+
   try {
     const created = workoutStore.registerExercise({
       name,
@@ -358,7 +169,7 @@ const handleCreateExercise = () => {
       const targetEntry = draft.value.entries[targetIndex]
       if (targetEntry) {
         targetEntry.exerciseId = created.id
-        syncEntryWithExercise(targetEntry)
+        doSyncEntry(targetEntry)
       }
     }
     ElMessage.success('成功新增動作')
@@ -373,110 +184,13 @@ const handleCreateExercise = () => {
   }
 }
 
-const resetDraftOnOpen = (value: boolean) => {
-  if (value) {
-    hydrateDraft()
-  }
-}
-
-watch(
-  () => props.modelValue,
-  (value) => {
-    resetDraftOnOpen(value)
-    if (!value) {
-      resetExerciseDialog()
-    }
-  },
-)
-
-watch(
-  () => props.session,
-  (value) => {
-    if (props.modelValue) {
-      resetDraftOnOpen(true)
-    }
-  },
-)
-
-watch(
-  () => props.canEdit,
-  (value) => {
-    if (!value) {
-      exerciseDialogVisible.value = false
-    }
-  },
-)
-
-watch(
-  () => exercises.value,
-  () => {
-    draft.value.entries.forEach(syncEntryWithExercise)
-  },
-  { deep: true },
-)
-
-const sanitizeDraft = (): DraftWorkoutSession => ({
-  id: draft.value.id,
-  date: props.date,
-  note: draft.value.note?.trim() || undefined,
-  entries: draft.value.entries.map((entry) => {
-    const category = getExerciseCategory(entry.exerciseId)
-    const base = {
-      id: entry.id,
-      exerciseId: entry.exerciseId,
-      note: entry.note?.trim() || undefined,
-    }
-
-    if (category === 'cardio') {
-      const duration = Number(entry.durationMinutes)
-      const normalizedDuration = Number.isFinite(duration) ? Math.max(0, Math.round(duration)) : 0
-      return {
-        ...base,
-        sets: [],
-        durationMinutes: normalizedDuration > 0 ? normalizedDuration : undefined,
-      }
-    }
-
-    return {
-      ...base,
-      sets: entry.sets.map((set) => ({
-        id: set.id,
-        weight: Number(set.weight),
-        unit: set.unit,
-        reps: Number(set.reps),
-        note: set.note?.trim() || undefined,
-      })),
-      durationMinutes: undefined,
-    }
-  }),
-  nutrition: {
-    waterIntakeMl: Number(draft.value.nutrition.waterIntakeMl) || 0,
-    meals: mealTypes.reduce<DraftDailyNutrition['meals']>((acc, mealType) => {
-      acc[mealType] = draft.value.nutrition.meals[mealType].map((item) => ({
-        id: item.id,
-        mealType,
-        name: item.name,
-        calories: Number(item.calories) || 0,
-        note: item.note?.trim() || undefined,
-      }))
-      return acc
-    }, {
-      breakfast: [],
-      lunch: [],
-      dinner: [],
-    }),
-  },
-  isCoachSession: draft.value.isCoachSession,
-})
-
 const validateDraft = () => {
   for (const entry of draft.value.entries) {
     if (!entry.exerciseId) {
       ElMessage.error('請為每個訓練項目選擇動作')
       return false
     }
-    const category = getExerciseCategory(entry.exerciseId)
-    if (category === 'cardio') {
+    if (isCardioEntry(entry)) {
       const duration = Number(entry.durationMinutes)
       if (!Number.isFinite(duration) || duration <= 0) {
         ElMessage.error('請為有氧運動輸入有效的時間（分鐘）')
@@ -500,25 +214,23 @@ const validateDraft = () => {
     }
   }
 
-  if (draft.value.nutrition) {
-    if (draft.value.nutrition.waterIntakeMl < 0) {
-      ElMessage.error('喝水量不可為負數')
-      return false
-    }
+  if (draft.value.nutrition.waterIntakeMl < 0) {
+    ElMessage.error('喝水量不可為負數')
+    return false
+  }
 
-    for (const mealType of mealTypes) {
-      const items = draft.value.nutrition.meals[mealType]
-      for (const item of items) {
-        const name = item.name.trim()
-        if (!name) {
-          ElMessage.error(`請為${mealLabels[mealType]}項目填寫名稱`)
-          return false
-        }
-        const calories = Number(item.calories)
-        if (!Number.isFinite(calories) || calories < 0) {
-          ElMessage.error(`請為${mealLabels[mealType]}項目設定有效的大卡數`)
-          return false
-        }
+  for (const mealType of mealTypes) {
+    const items = draft.value.nutrition.meals[mealType]
+    for (const item of items) {
+      const name = item.name.trim()
+      if (!name) {
+        ElMessage.error(`請為${mealLabels[mealType]}項目填寫名稱`)
+        return false
+      }
+      const calories = Number(item.calories)
+      if (!Number.isFinite(calories) || calories < 0) {
+        ElMessage.error(`請為${mealLabels[mealType]}項目設定有效的大卡數`)
+        return false
       }
     }
   }
@@ -528,7 +240,7 @@ const validateDraft = () => {
 
 const handleSave = () => {
   if (isReadOnly.value) {
-    ElMessage.info('目前為唯讀模式，請以完整登入取得編輯權限。')
+    showReadOnlyInfo()
     return
   }
   if (!validateDraft()) {
@@ -555,7 +267,7 @@ const handleDelete = async () => {
   }
 
   if (isReadOnly.value) {
-    ElMessage.info('目前為唯讀模式，請以完整登入取得編輯權限。')
+    showReadOnlyInfo()
     return
   }
 
@@ -582,7 +294,28 @@ const handleDelete = async () => {
     }
   }
 }
+
+watch(
+  () => props.modelValue,
+  (value) => {
+    if (value) {
+      hydrateDraft(sessionRef.value)
+    } else {
+      resetExerciseDialog()
+    }
+  },
+)
+
+watch(
+  () => props.canEdit,
+  (value) => {
+    if (!value) {
+      exerciseDialogVisible.value = false
+    }
+  },
+)
 </script>
+
 
 <template>
   <el-dialog :model-value="isVisible" title="管理訓練紀錄" width="720px" class="session-editor-dialog" @close="closeDialog">

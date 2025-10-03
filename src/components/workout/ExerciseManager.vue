@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue'
+import { computed } from 'vue'
 import { storeToRefs } from 'pinia'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
+import { useExerciseManagerForm } from '@/composables/exerciseManager/useExerciseManagerForm'
 import { useWorkoutStore } from '@/stores/workoutStore'
 import type { ExerciseCategory, ExerciseDefinition } from '@/types/workout'
 
@@ -26,36 +27,19 @@ const isVisible = computed({
 
 const isReadOnly = computed(() => !props.canEdit)
 
-const mode = ref<'create' | 'edit'>('create')
-const editingExerciseId = ref<string | null>(null)
-
-const form = reactive({
-  name: '',
-  bodyPart: '',
-  category: 'strength' as ExerciseCategory,
-})
-
-const CATEGORY_LABELS: Record<ExerciseCategory, string> = {
-  strength: '重量訓練',
-  cardio: '有氧運動',
-}
-
-const categoryOptions: { value: ExerciseCategory; label: string }[] = [
-  { value: 'strength', label: CATEGORY_LABELS.strength },
-  { value: 'cardio', label: CATEGORY_LABELS.cardio },
-]
-
-const isStrengthCategory = computed(() => form.category === 'strength')
+// Extract reusable form state (mode, fields, category helpers).
+const {
+  CATEGORY_LABELS,
+  categoryOptions,
+  editingExerciseId,
+  form,
+  isStrengthCategory,
+  mode,
+  startCreate: formStartCreate,
+  startEdit: formStartEdit,
+} = useExerciseManagerForm()
 
 const usageFor = (exerciseId: string) => exerciseUsageById.value(exerciseId)
-
-const resetForm = () => {
-  form.name = ''
-  form.bodyPart = ''
-  form.category = 'strength'
-  mode.value = 'create'
-  editingExerciseId.value = null
-}
 
 const closeDialog = () => {
   emit('update:modelValue', false)
@@ -71,17 +55,13 @@ const guardEditAction = (callback: () => void) => {
 
 const startCreate = () => {
   guardEditAction(() => {
-    resetForm()
+    formStartCreate()
   })
 }
 
 const startEdit = (exercise: ExerciseDefinition) => {
   guardEditAction(() => {
-    mode.value = 'edit'
-    editingExerciseId.value = exercise.id
-    form.name = exercise.name
-    form.bodyPart = exercise.bodyPart ?? ''
-    form.category = exercise.category
+    formStartEdit(exercise)
   })
 }
 
@@ -121,7 +101,7 @@ const handleSubmit = () => {
       })
       ElMessage.success('已新增訓練動作')
     }
-    resetForm()
+    formStartCreate()
   } catch (error) {
     if (error instanceof Error) {
       ElMessage.error(error.message)
@@ -161,7 +141,7 @@ const handleDelete = async (exercise: ExerciseDefinition) => {
     workoutStore.removeExercise(exercise.id)
     ElMessage.success('已刪除訓練動作')
     if (editingExerciseId.value === exercise.id) {
-      resetForm()
+      formStartCreate()
     }
   } catch (error) {
     if (error instanceof Error) {
@@ -173,7 +153,7 @@ const handleDelete = async (exercise: ExerciseDefinition) => {
 }
 
 const handleCancelEdit = () => {
-  resetForm()
+  formStartCreate()
 }
 
 const formatTimestamp = (value: string) => {
@@ -190,27 +170,8 @@ const formatTimestamp = (value: string) => {
 }
 
 const formatCategory = (category: ExerciseCategory) => CATEGORY_LABELS[category] ?? category
-
-watch(
-  () => form.category,
-  (value) => {
-    if (value === 'cardio') {
-      form.bodyPart = ''
-    }
-  },
-)
-
-watch(
-  () => props.modelValue,
-  (value) => {
-    if (value) {
-      resetForm()
-    } else {
-      resetForm()
-    }
-  },
-)
 </script>
+
 
 <template>
   <el-dialog :model-value="isVisible" title="訓練動作管理" width="720px" @close="closeDialog">
