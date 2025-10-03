@@ -105,10 +105,11 @@ interface UseSessionDraftOptions {
   date: ComputedRef<string>
   session: ComputedRef<WorkoutSession | null>
   exercises: Ref<Record<string, ExerciseDefinition>>
+  isActive?: Ref<boolean>
 }
 
 // Centralizes session draft manipulation (entries, sets, nutrition) used by the editor dialog.
-export const useSessionDraft = ({ date, session, exercises }: UseSessionDraftOptions) => {
+export const useSessionDraft = ({ date, session, exercises, isActive }: UseSessionDraftOptions) => {
   const draft = ref<SessionDraft>({
     date: date.value,
     note: '',
@@ -116,6 +117,8 @@ export const useSessionDraft = ({ date, session, exercises }: UseSessionDraftOpt
     nutrition: createEmptyNutritionDraft(),
     isCoachSession: false,
   })
+
+  const isDraftActive = isActive ?? ref(true)
 
   const exerciseOptions = computed<ExerciseDefinition[]>(() => Object.values(exercises.value))
 
@@ -332,16 +335,25 @@ export const useSessionDraft = ({ date, session, exercises }: UseSessionDraftOpt
 
   // Ensure each entry stays aligned with the latest exercise metadata (e.g. category changes).
   watch(exercises, () => {
+    if (!isDraftActive.value) {
+      return
+    }
     draft.value.entries.forEach(syncEntryWithExercise)
   })
 
   // Keep the draft date mirrored with the parent prop.
   watch(date, (value) => {
+    if (!isDraftActive.value) {
+      return
+    }
     draft.value.date = value
   })
 
   // Rehydrate whenever the selected workout session changes upstream.
   watch(session, (value) => {
+    if (!isDraftActive.value) {
+      return
+    }
     hydrateDraft(value)
   })
 

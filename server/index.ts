@@ -50,6 +50,8 @@ interface SetRow {
 
 type MealType = 'breakfast' | 'lunch' | 'dinner'
 
+const MEAL_TYPES: MealType[] = ['breakfast', 'lunch', 'dinner']
+
 interface NutritionRow {
   id: string
   sessionId: string
@@ -513,67 +515,93 @@ const buildHydration = async (tenantId: string): Promise<HydrationPayload> => {
 
   const exercises = exerciseRows.map(mapExerciseRow)
   const entriesBySession = new Map<string, SessionEntryRow[]>()
-  entryRows.forEach((entry) => {
-    const list = entriesBySession.get(entry.sessionId) ?? []
+  for (const entry of entryRows) {
+    let list = entriesBySession.get(entry.sessionId)
+    if (!list) {
+      list = []
+      entriesBySession.set(entry.sessionId, list)
+    }
     list.push(entry)
-    entriesBySession.set(entry.sessionId, list)
-  })
+  }
 
   const setsByEntry = new Map<string, SetRow[]>()
-  setRows.forEach((set) => {
-    const list = setsByEntry.get(set.entryId) ?? []
+  for (const set of setRows) {
+    let list = setsByEntry.get(set.entryId)
+    if (!list) {
+      list = []
+      setsByEntry.set(set.entryId, list)
+    }
     list.push(set)
-    setsByEntry.set(set.entryId, list)
+  }
+
+  type NutritionBuckets = Record<MealType, NutritionRow[]>
+  const createNutritionBuckets = (): NutritionBuckets => ({
+    breakfast: [],
+    lunch: [],
+    dinner: [],
   })
 
-  const nutritionBySession = new Map<string, NutritionRow[]>()
-  nutritionRows.forEach((item) => {
-    const list = nutritionBySession.get(item.sessionId) ?? []
-    list.push(item)
-    nutritionBySession.set(item.sessionId, list)
-  })
+  const nutritionBySession = new Map<string, NutritionBuckets>()
+  for (const item of nutritionRows) {
+    let buckets = nutritionBySession.get(item.sessionId)
+    if (!buckets) {
+      buckets = createNutritionBuckets()
+      nutritionBySession.set(item.sessionId, buckets)
+    }
+    buckets[item.mealType].push(item)
+  }
 
   const sessions: WorkoutSession[] = sessionRows.map((row) => {
     const base = mapSessionRow(row)
-    const entries = (entriesBySession.get(row.id) ?? [])
-      .sort((a, b) => a.sortOrder - b.sortOrder)
-      .map((entry) => ({
-        id: entry.id,
-        exerciseId: entry.exerciseId,
-        note: entry.note ?? undefined,
-        durationMinutes: entry.durationMinutes ?? undefined,
-        sets: (setsByEntry.get(entry.id) ?? [])
-          .sort((a, b) => a.sortOrder - b.sortOrder)
-          .map((set) => ({
-            id: set.id,
-            weight: set.weight,
-            unit: set.unit,
-            reps: set.reps,
-            note: set.note ?? undefined,
+    const entryRowsForSession = entriesBySession.get(row.id) ?? []
+    const entries = entryRowsForSession.map((entry) => ({
+      id: entry.id,
+      exerciseId: entry.exerciseId,
+      note: entry.note ?? undefined,
+      durationMinutes: entry.durationMinutes ?? undefined,
+      sets: (setsByEntry.get(entry.id) ?? []).map((set) => ({
+        id: set.id,
+        weight: set.weight,
+        unit: set.unit,
+        reps: set.reps,
+        note: set.note ?? undefined,
+      })),
+    }))
+
+    const nutritionBuckets = nutritionBySession.get(row.id)
+    const nutritionItems = nutritionBuckets
+      ? {
+          breakfast: nutritionBuckets.breakfast.map((item) => ({
+            id: item.id,
+            mealType: item.mealType,
+            name: item.name,
+            calories: Number(item.calories),
+            note: item.note ?? undefined,
           })),
-      }))
+          lunch: nutritionBuckets.lunch.map((item) => ({
+            id: item.id,
+            mealType: item.mealType,
+            name: item.name,
+            calories: Number(item.calories),
+            note: item.note ?? undefined,
+          })),
+          dinner: nutritionBuckets.dinner.map((item) => ({
+            id: item.id,
+            mealType: item.mealType,
+            name: item.name,
+            calories: Number(item.calories),
+            note: item.note ?? undefined,
+          })),
+        }
+      : {
+          breakfast: [],
+          lunch: [],
+          dinner: [],
+        }
 
-    const nutritionSource = (nutritionBySession.get(row.id) ?? []).sort((a, b) => a.sortOrder - b.sortOrder)
+    const hasMeals = MEAL_TYPES.some((mealType) => nutritionItems[mealType].length > 0)
 
-    const mapNutritionItems = (mealType: MealType) =>
-      nutritionSource
-        .filter((item) => item.mealType === mealType)
-        .map((item) => ({
-          id: item.id,
-          mealType: item.mealType,
-          name: item.name,
-          calories: Number(item.calories),
-          note: item.note ?? undefined,
-        }))
-
-    const nutritionItems = {
-      breakfast: mapNutritionItems('breakfast'),
-      lunch: mapNutritionItems('lunch'),
-      dinner: mapNutritionItems('dinner'),
-    }
-
-    const shouldIncludeNutrition =
-      base.waterIntakeMl > 0 || nutritionItems.breakfast.length || nutritionItems.lunch.length || nutritionItems.dinner.length
+    const shouldIncludeNutrition = base.waterIntakeMl > 0 || hasMeals
 
     const { waterIntakeMl, ...sessionBase } = base
 

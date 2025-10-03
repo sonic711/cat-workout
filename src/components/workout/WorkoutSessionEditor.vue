@@ -64,6 +64,7 @@ const {
   date: dateRef,
   session: sessionRef,
   exercises,
+  isActive: isVisible,
 })
 
 // Local exercise dialog used to add new moves without leaving the editor.
@@ -295,11 +296,11 @@ const handleOpenExerciseDialog = (entry: DraftEntry) => {
 }
 
 watch(
-  () => draft.value.entries,
-  (entries) => {
-    setGroupOrder(deriveGroupOrderFromEntries(entries))
+  () => draft.value.entries.map((entry) => `${entry.draftKey ?? ''}:${getEntryCategory(entry)}`),
+  () => {
+    setGroupOrder(deriveGroupOrderFromEntries(draft.value.entries))
   },
-  { deep: true, immediate: true },
+  { immediate: true },
 )
 
 const formatExerciseOptionLabel = (exercise: ExerciseDefinition): string => {
