@@ -47,7 +47,7 @@
 * 專案已脫離 Vite 預設樣板，首頁使用 Element Plus 建立月曆 + 詳情雙欄版面。
 * 已整合 Element Plus 並在全域匯入樣式，後續元件可直接使用 Element Plus 元件。
 * 優化首頁版面視覺：置中主內容、調整卡片圓角陰影與字體層級，並針對 1200px 以下與手機尺寸加入 RWD。
-* 月曆日期格顯示 `useWorkoutStore` 內的身體部位標籤，暫以示範資料 hydrate（後續會替換為實際儲存機制）。
+* 月曆日期格顯示 `useWorkoutStore` 內的身體部位標籤，並以雙欄晶片排版呈現，確保多個部位時仍能一目了然；暫以示範資料 hydrate（後續會替換為實際儲存機制）。
 * 詳情面板可呈現選定日期的訓練內容、組數表格與部位標籤，資料來源為 Pinia store。
 * 新增 `useWorkoutStore`（Pinia）與 `@/types/workout`，定義訓練紀錄資料結構與 SQLite 串接所需的初始方法。
 * 建立 `PersistenceService` 介面與 `createDemoPersistenceService`，再透過 `persistenceProvider` 管理服務實例。
@@ -56,6 +56,7 @@
 * 新增 `createMysqlPersistenceService`，以 fetch 串接 `/api/*` 端點並依登入帳號帶上 `x-storage-key` header。
 * `persistenceProvider` 預設注入 MySQL persistence（失敗時退回 demo service）。
 * 新增 `WorkoutSessionEditor` 對話框，支援建立 / 編輯 / 刪除指定日期的訓練紀錄，含項目、組數與 inline 新增動作。
+* 引入 `useResponsiveDialog` hook，讓訓練紀錄編輯與動作管理彈窗在手機端自動調整寬度、頂距與排版，提升行動裝置的可用性。
 * 首頁詳情面板加入「管理訓練紀錄」入口，無紀錄時可直接建立新資料。
 * 建置 `authStore` 與登入面板，支援帳號 / 密碼驗證；僅輸入帳號為唯讀模式，帳號密碼皆正確（admin/admin、sean/sean）可進入對應帳號的編輯模式。
 * 登入後會將使用者與模式持久化於瀏覽器儲存，重新整理後仍保留登入狀態，直到手動登出或清除 cookies。
@@ -69,12 +70,13 @@
 * 訓練紀錄可勾選「教練課」，Pinia store 會保存旗標並在月曆與詳情面板以黃色標示提醒。
 * 「管理訓練紀錄」對話框不再預設產生空的訓練項目，允許僅記錄飲食也能完成儲存流程。
 * REST API 與持久層擴充 `nutrition` 與 `isCoachSession` 欄位，包含 MySQL schema、hydrate/save 流程與 demo service，同步支援完整資料往返。
+* 建立 Vitest 測試環境（`vitest.config.ts`、`tests/setup.ts`），新增 `useResponsiveDialog` 與 `useHomeCalendar` 的單元測試範例，相關說明整理於 `test.md`。
 
-**下一步 TODO：**
+**下一步 TODO（優先順序）：**
 
-* 強化訓練紀錄編輯體驗（例如快速新增組數、動作搜尋、複製既有紀錄等）。
-* 擴充錯誤處理與使用者提示（例如 localStorage 空間不足或初始化失敗時的 fallback 流程）。
-* 規劃資料匯入 / 匯出或同步機制，讓使用者可備份或跨裝置轉移紀錄。
-* 補齊單元測試，確保 session 編輯流程與 persistence 互動可靠。
-* 加入使用者註冊 / 密碼重設流程與更完整的權限管理。
-* 允許匯出訓練動作清單與使用者資料，並導入更完整的錯誤提示流程。
+1. **補齊單元測試（最高優先）**：補強日曆彈窗與 session 編輯流程的單元測試，確保資料流與 UI 行為穩定。
+2. 強化訓練紀錄編輯體驗（例如快速新增組數、動作搜尋、複製既有紀錄等）。
+3. 擴充錯誤處理與使用者提示（例如 localStorage 空間不足或初始化失敗時的 fallback 流程）。
+4. 規劃資料匯入 / 匯出或同步機制，讓使用者可備份或跨裝置轉移紀錄。
+5. 加入使用者註冊 / 密碼重設流程與更完整的權限管理。
+6. 允許匯出訓練動作清單與使用者資料，並導入更完整的錯誤提示流程。
