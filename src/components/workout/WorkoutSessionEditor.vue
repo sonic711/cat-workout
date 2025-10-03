@@ -1,13 +1,15 @@
 <script setup lang="ts">
-import { computed, watch } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { CaretBottom, CaretRight, Rank } from '@element-plus/icons-vue'
+import Draggable from 'vuedraggable'
 
 import { useSessionDraft } from '@/composables/sessionEditor/useSessionDraft'
 import { useExerciseDialog } from '@/composables/sessionEditor/useExerciseDialog'
 import type { SessionDraft } from '@/composables/sessionEditor/useSessionDraft'
 import { useWorkoutStore } from '@/stores/workoutStore'
-import type { ExerciseDefinition, MealType, WorkoutSession } from '@/types/workout'
+import type { ExerciseCategory, ExerciseDefinition, MealType, WorkoutSession } from '@/types/workout'
 
 interface Props {
   modelValue: boolean
@@ -78,6 +80,24 @@ const {
   isReadOnly,
 })
 
+const DEFAULT_GROUP_ORDER: ExerciseCategory[] = ['strength', 'cardio']
+
+type GroupItem = {
+  id: ExerciseCategory
+}
+
+const GROUP_LABELS: Record<ExerciseCategory, string> = {
+  strength: '重量訓練',
+  cardio: '有氧運動',
+}
+
+const groupItems = ref<GroupItem[]>(DEFAULT_GROUP_ORDER.map((category) => ({ id: category })))
+
+const collapsedState = reactive<Record<ExerciseCategory, boolean>>({
+  strength: false,
+  cardio: false,
+})
+
 const closeDialog = () => {
   emit('update:modelValue', false)
 }
@@ -97,14 +117,153 @@ const guardMutation = (callback: () => void) => {
 
 type DraftEntry = SessionDraft['entries'][number]
 
-const handleEntryExerciseChange = (entry: DraftEntry) => {
-  guardMutation(() => doSyncEntry(entry))
+const getEntryCategory = (entry: DraftEntry): ExerciseCategory => (isCardioEntry(entry) ? 'cardio' : 'strength')
+
+const currentGroupOrder = computed(() => groupItems.value.map((item) => item.id))
+
+const entryGroups = computed(() =>
+  currentGroupOrder.value.map((category) => ({
+    category,
+    label: GROUP_LABELS[category],
+    entries: draft.value.entries.filter((entry) => getEntryCategory(entry) === category),
+  })),
+)
+
+const entriesByCategory = computed<Record<ExerciseCategory, DraftEntry[]>>(() => {
+  const initial: Record<ExerciseCategory, DraftEntry[]> = {
+    strength: [],
+    cardio: [],
+  }
+  entryGroups.value.forEach((group) => {
+    initial[group.category] = group.entries
+  })
+  return initial
+})
+
+const deriveGroupOrderFromEntries = (entries: DraftEntry[]): ExerciseCategory[] => {
+  const seen = new Set<ExerciseCategory>()
+  const order: ExerciseCategory[] = []
+  for (const entry of entries) {
+    const category = getEntryCategory(entry)
+    if (!seen.has(category)) {
+      seen.add(category)
+      order.push(category)
+    }
+  }
+  for (const category of DEFAULT_GROUP_ORDER) {
+    if (!seen.has(category)) {
+      order.push(category)
+    }
+  }
+  return order
 }
 
-const handleAddEntry = () => guardMutation(addEntry)
+const setGroupOrder = (order: ExerciseCategory[]) => {
+  const normalized = Array.from(new Set<ExerciseCategory>([...order, ...DEFAULT_GROUP_ORDER]))
+  const current = currentGroupOrder.value
+  const differs =
+    normalized.length !== current.length || normalized.some((category, index) => category !== current[index])
+  if (!differs) {
+    return
+  }
+  groupItems.value = normalized.map((category) => ({ id: category }))
+}
 
-const handleRemoveEntry = (index: number) => {
-  guardMutation(() => removeEntry(index))
+const collectEntriesByCategory = (): Record<ExerciseCategory, DraftEntry[]> => {
+  const groups: Record<ExerciseCategory, DraftEntry[]> = {
+    strength: [],
+    cardio: [],
+  }
+  for (const entry of draft.value.entries) {
+    groups[getEntryCategory(entry)].push(entry)
+  }
+  return groups
+}
+
+const rebuildDraftEntries = (
+  overrides: Partial<Record<ExerciseCategory, DraftEntry[]>> = {},
+  order: ExerciseCategory[] = currentGroupOrder.value,
+) => {
+  const groups = collectEntriesByCategory()
+  for (const category of Object.keys(overrides) as ExerciseCategory[]) {
+    if (overrides[category]) {
+      groups[category] = overrides[category]!
+    }
+  }
+  const flattened = order.flatMap((category) => groups[category])
+  draft.value.entries.splice(0, draft.value.entries.length, ...flattened)
+}
+
+const closeExerciseDialogIfOpen = () => {
+  if (exerciseDialogVisible.value) {
+    exerciseDialogVisible.value = false
+    resetExerciseDialog()
+  }
+}
+
+const handleGroupOrderChange = (items: GroupItem[]) => {
+  if (isReadOnly.value) {
+    showReadOnlyInfo()
+    return
+  }
+  groupItems.value = items.map((item) => ({ ...item }))
+  const categories = groupItems.value.map((item) => item.id)
+  setGroupOrder(categories)
+  rebuildDraftEntries({}, categories)
+  closeExerciseDialogIfOpen()
+}
+
+const handleEntryOrderChange = (category: ExerciseCategory, items: DraftEntry[]) => {
+  if (isReadOnly.value) {
+    showReadOnlyInfo()
+    return
+  }
+  rebuildDraftEntries({ [category]: items })
+  closeExerciseDialogIfOpen()
+}
+
+const createEntryOrderUpdater = (category: ExerciseCategory) => (items: DraftEntry[]) => {
+  handleEntryOrderChange(category, items)
+}
+
+const toggleGroupCollapsed = (category: ExerciseCategory) => {
+  collapsedState[category] = !collapsedState[category]
+}
+
+const handleEntryExerciseChange = (entry: DraftEntry) => {
+  if (isReadOnly.value) {
+    showReadOnlyInfo()
+    return
+  }
+
+  const previousCategory = entry.categoryHint ?? getEntryCategory(entry)
+  doSyncEntry(entry)
+  const nextCategory = getEntryCategory(entry)
+  if (previousCategory !== nextCategory) {
+    rebuildDraftEntries()
+    collapsedState[nextCategory] = false
+  }
+}
+
+const handleAddEntry = (category: ExerciseCategory) => {
+  guardMutation(() => {
+    addEntry(category)
+    rebuildDraftEntries()
+    collapsedState[category] = false
+  })
+}
+
+const handleRemoveEntry = (category: ExerciseCategory, index: number) => {
+  guardMutation(() => {
+    const entry = entriesByCategory.value[category]?.[index]
+    if (!entry) {
+      return
+    }
+    const absoluteIndex = draft.value.entries.indexOf(entry)
+    if (absoluteIndex >= 0) {
+      removeEntry(absoluteIndex)
+    }
+  })
 }
 
 const handleAddSet = (entry: DraftEntry) => {
@@ -123,13 +282,25 @@ const handleRemoveMealItem = (mealType: MealType, index: number) => {
   guardMutation(() => removeMealItem(mealType, index))
 }
 
-const handleOpenExerciseDialog = (entryIndex: number) => {
+const handleOpenExerciseDialog = (entry: DraftEntry) => {
   if (isReadOnly.value) {
     showReadOnlyInfo()
     return
   }
-  openExerciseDialog(entryIndex)
+  const targetIndex = draft.value.entries.indexOf(entry)
+  if (targetIndex < 0) {
+    return
+  }
+  openExerciseDialog(targetIndex)
 }
+
+watch(
+  () => draft.value.entries,
+  (entries) => {
+    setGroupOrder(deriveGroupOrderFromEntries(entries))
+  },
+  { deep: true, immediate: true },
+)
 
 const formatExerciseOptionLabel = (exercise: ExerciseDefinition): string => {
   if (exercise.category === 'cardio') {
@@ -170,6 +341,9 @@ const handleCreateExercise = () => {
       if (targetEntry) {
         targetEntry.exerciseId = created.id
         doSyncEntry(targetEntry)
+        const nextCategory = getEntryCategory(targetEntry)
+        rebuildDraftEntries()
+        collapsedState[nextCategory] = false
       }
     }
     ElMessage.success('成功新增動作')
@@ -344,127 +518,187 @@ watch(
       </div>
 
       <div class="entries-section">
-        <div
-          v-for="(entry, entryIndex) in draft.entries"
-          :key="entry.id ?? entryIndex"
-          class="entry-block"
+        <Draggable
+          :model-value="groupItems"
+          item-key="id"
+          animation="150"
+          handle=".group-drag-handle"
+          :disabled="isReadOnly"
+          class="entry-groups"
+          @update:model-value="handleGroupOrderChange"
         >
-          <div class="entry-header">
-            <el-select
-              v-model="entry.exerciseId"
-              placeholder="選擇訓練動作"
-              filterable
-              class="exercise-select"
-              :disabled="isReadOnly"
-              @change="handleEntryExerciseChange(entry)"
-            >
-              <el-option
-                v-for="exercise in exerciseOptions"
-                :key="exercise.id"
-                :label="formatExerciseOptionLabel(exercise)"
-                :value="exercise.id"
-              />
-            </el-select>
-            <el-button type="primary" link :disabled="isReadOnly" @click="openExerciseDialog(entryIndex)">
-              新增動作
-            </el-button>
-            <el-button type="danger" link :disabled="isReadOnly" @click="handleRemoveEntry(entryIndex)">
-              移除此項目
-            </el-button>
-          </div>
-
-          <el-input
-            v-model="entry.note"
-            type="textarea"
-            placeholder="項目備註"
-            :rows="2"
-            class="entry-note"
-            :disabled="isReadOnly"
-          />
-
-          <div v-if="isCardioEntry(entry)" class="cardio-duration">
-            <el-input-number
-              v-model="entry.durationMinutes"
-              :min="1"
-              :step="5"
-              :disabled="isReadOnly"
-              class="cardio-duration-input"
-            />
-            <span class="cardio-duration-label">分鐘</span>
-          </div>
-
-          <el-table v-else :data="entry.sets" size="small" border class="set-table">
-            <el-table-column label="重量 (kg/lb)" width="180">
-              <template #default="{ row }">
-                <div class="set-weight">
-                  <el-select
-                    v-model="row.weight"
-                    class="weight-select"
-                    filterable
+          <template #item="{ element: group }: { element: GroupItem }">
+            <section :key="group.id" class="entry-group">
+              <header class="entry-group-header">
+                <div class="group-header-left">
+                  <el-button link class="group-toggle" @click="toggleGroupCollapsed(group.id)">
+                    <el-icon class="group-toggle-icon">
+                      <CaretBottom v-if="!collapsedState[group.id]" />
+                      <CaretRight v-else />
+                    </el-icon>
+                    <span class="group-title">{{ GROUP_LABELS[group.id] }}</span>
+                    <span v-if="entriesByCategory[group.id].length" class="group-count">
+                      （{{ entriesByCategory[group.id].length }}）
+                    </span>
+                  </el-button>
+                </div>
+                <div class="group-header-right">
+                  <span v-if="!isReadOnly" class="group-drag-handle" aria-hidden="true">
+                    <el-icon><Rank /></el-icon>
+                  </span>
+                  <el-button type="primary" plain :disabled="isReadOnly" @click="handleAddEntry(group.id)">
+                    新增訓練項目
+                  </el-button>
+                </div>
+              </header>
+              <transition name="group-collapse">
+                <div v-show="!collapsedState[group.id]" class="entry-group-body">
+                  <div v-if="!entriesByCategory[group.id].length" class="entry-group-empty">
+                    尚未新增{{ GROUP_LABELS[group.id] }}項目。
+                  </div>
+                  <Draggable
+                    v-else
+                    :model-value="entriesByCategory[group.id]"
+                    item-key="draftKey"
+                    animation="150"
+                    handle=".entry-drag-handle"
                     :disabled="isReadOnly"
-                    placeholder="選擇重量"
+                    @update:model-value="createEntryOrderUpdater(group.id)"
                   >
-                    <el-option
-                      v-for="option in getWeightOptions(row.unit)"
-                      :key="`weight-${row.unit}-${option}`"
-                      :label="formatWeightLabel(option)"
-                      :value="option"
-                    />
-                  </el-select>
-                  <el-select v-model="row.unit" class="unit-select" :disabled="isReadOnly">
-                    <el-option label="kg" value="kg" />
-                    <el-option label="lb" value="lb" />
-                  </el-select>
-                </div>
-              </template>
-            </el-table-column>
-            <el-table-column label="次數" width="120">
-              <template #default="{ row }">
-                <el-select
-                  v-model="row.reps"
-                  class="reps-select"
-                  filterable
-                  :disabled="isReadOnly"
-                  placeholder="選擇次數"
-                >
-                  <el-option
-                    v-for="option in repOptions"
-                    :key="`reps-${option}`"
-                    :label="option"
-                    :value="option"
-                  />
-                </el-select>
-              </template>
-            </el-table-column>
-            <el-table-column label="備註">
-              <template #default="{ row }">
-                <el-input v-model="row.note" placeholder="選填" :disabled="isReadOnly" />
-              </template>
-            </el-table-column>
-            <el-table-column width="160" align="right">
-              <template #default="{ row, $index }">
-                <div class="table-actions">
-                  <el-button type="primary" link :disabled="isReadOnly" @click="handleAddSet(entry)">
-                    新增組數
-                  </el-button>
-                  <el-button type="danger" link :disabled="isReadOnly" @click="handleRemoveSet(entry, $index)">
-                    移除此組
-                  </el-button>
-                </div>
-              </template>
-            </el-table-column>
-          </el-table>
+                    <template #item="{ element: entry, index }: { element: DraftEntry; index: number }">
+                      <div :key="entry.draftKey" class="entry-block">
+                        <div class="entry-header">
+                          <span v-if="!isReadOnly" class="entry-drag-handle" aria-hidden="true">
+                            <el-icon><Rank /></el-icon>
+                          </span>
+                          <el-select
+                            v-model="entry.exerciseId"
+                            placeholder="選擇訓練動作"
+                            filterable
+                            class="exercise-select"
+                            :disabled="isReadOnly"
+                            @change="handleEntryExerciseChange(entry)"
+                          >
+                            <el-option
+                              v-for="exercise in exerciseOptions"
+                              :key="exercise.id"
+                              :label="formatExerciseOptionLabel(exercise)"
+                              :value="exercise.id"
+                            />
+                          </el-select>
+                          <el-button type="primary" link :disabled="isReadOnly" @click="handleOpenExerciseDialog(entry)">
+                            新增動作
+                          </el-button>
+                          <el-button
+                            type="danger"
+                            link
+                            :disabled="isReadOnly"
+                            @click="handleRemoveEntry(group.id, index)"
+                          >
+                            移除此項目
+                          </el-button>
+                        </div>
 
-          <div v-if="!isCardioEntry(entry)" class="table-actions">
-            <el-button type="primary" plain :disabled="isReadOnly" @click="handleAddSet(entry)">
-              新增組數
-            </el-button>
-          </div>
-        </div>
+                        <el-input
+                          v-model="entry.note"
+                          type="textarea"
+                          placeholder="項目備註"
+                          :rows="2"
+                          class="entry-note"
+                          :disabled="isReadOnly"
+                        />
 
-        <el-button type="primary" plain :disabled="isReadOnly" @click="handleAddEntry">
-          新增訓練項目
-        </el-button>
+                        <div v-if="isCardioEntry(entry)" class="cardio-duration">
+                          <el-input-number
+                            v-model="entry.durationMinutes"
+                            :min="1"
+                            :step="5"
+                            :disabled="isReadOnly"
+                            class="cardio-duration-input"
+                          />
+                          <span class="cardio-duration-label">分鐘</span>
+                        </div>
+
+                        <el-table v-else :data="entry.sets" size="small" border class="set-table">
+                          <el-table-column label="重量 (kg/lb)" width="180">
+                            <template #default="{ row }">
+                              <div class="set-weight">
+                                <el-select
+                                  v-model="row.weight"
+                                  class="weight-select"
+                                  filterable
+                                  :disabled="isReadOnly"
+                                  placeholder="選擇重量"
+                                >
+                                  <el-option
+                                    v-for="option in getWeightOptions(row.unit)"
+                                    :key="`weight-${row.unit}-${option}`"
+                                    :label="formatWeightLabel(option)"
+                                    :value="option"
+                                  />
+                                </el-select>
+                                <el-select v-model="row.unit" class="unit-select" :disabled="isReadOnly">
+                                  <el-option label="kg" value="kg" />
+                                  <el-option label="lb" value="lb" />
+                                </el-select>
+                              </div>
+                            </template>
+                          </el-table-column>
+                          <el-table-column label="次數" width="120">
+                            <template #default="{ row }">
+                              <el-select
+                                v-model="row.reps"
+                                class="reps-select"
+                                filterable
+                                :disabled="isReadOnly"
+                                placeholder="選擇次數"
+                              >
+                                <el-option
+                                  v-for="option in repOptions"
+                                  :key="`reps-${option}`"
+                                  :label="option"
+                                  :value="option"
+                                />
+                              </el-select>
+                            </template>
+                          </el-table-column>
+                          <el-table-column label="備註">
+                            <template #default="{ row }">
+                              <el-input v-model="row.note" placeholder="選填" :disabled="isReadOnly" />
+                            </template>
+                          </el-table-column>
+                          <el-table-column width="160" align="right">
+                            <template #default="{ row, $index }">
+                              <div class="table-actions">
+                                <el-button type="primary" link :disabled="isReadOnly" @click="handleAddSet(entry)">
+                                  新增組數
+                                </el-button>
+                                <el-button
+                                  type="danger"
+                                  link
+                                  :disabled="isReadOnly"
+                                  @click="handleRemoveSet(entry, $index)"
+                                >
+                                  移除此組
+                                </el-button>
+                              </div>
+                            </template>
+                          </el-table-column>
+                        </el-table>
+
+                        <div v-if="!isCardioEntry(entry)" class="table-actions">
+                          <el-button type="primary" plain :disabled="isReadOnly" @click="handleAddSet(entry)">
+                            新增組數
+                          </el-button>
+                        </div>
+                      </div>
+                    </template>
+                  </Draggable>
+                </div>
+              </transition>
+            </section>
+          </template>
+        </Draggable>
       </div>
 
       <el-divider />
@@ -622,7 +856,87 @@ watch(
 .entries-section {
   display: flex;
   flex-direction: column;
+  gap: 1.25rem;
+}
+
+.entry-groups {
+  display: flex;
+  flex-direction: column;
   gap: 1rem;
+}
+
+.entry-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0.75rem;
+  border: 1px solid var(--el-border-color-light);
+  border-radius: 12px;
+  background-color: var(--el-fill-color-light);
+}
+
+.entry-group-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.group-header-left {
+  display: flex;
+  align-items: center;
+}
+
+.group-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0 0.25rem;
+  color: #111827;
+}
+
+.group-toggle-icon {
+  font-size: 1rem;
+}
+
+.group-title {
+  font-weight: 600;
+}
+
+.group-count {
+  color: #6b7280;
+}
+
+.group-header-right {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.group-drag-handle {
+  display: flex;
+  align-items: center;
+  color: #9ca3af;
+  cursor: grab;
+}
+
+.group-drag-handle :deep(.el-icon) {
+  font-size: 1.1rem;
+}
+
+.entry-group-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.entry-group-empty {
+  padding: 1rem;
+  border-radius: 8px;
+  border: 1px dashed var(--el-border-color);
+  color: #6b7280;
+  text-align: center;
+  background-color: var(--el-fill-color-blank);
 }
 
 .entry-block {
@@ -639,6 +953,17 @@ watch(
   display: flex;
   align-items: center;
   gap: 0.75rem;
+}
+
+.entry-drag-handle {
+  display: flex;
+  align-items: center;
+  color: #9ca3af;
+  cursor: grab;
+}
+
+.entry-drag-handle :deep(.el-icon) {
+  font-size: 1rem;
 }
 
 .exercise-select {
@@ -690,6 +1015,24 @@ watch(
 
 .cardio-duration-label {
   color: #4b5563;
+}
+
+.group-collapse-enter-active,
+.group-collapse-leave-active {
+  transition: max-height 0.2s ease, opacity 0.2s ease;
+}
+
+.group-collapse-enter-from,
+.group-collapse-leave-to {
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+}
+
+.group-collapse-enter-to,
+.group-collapse-leave-from {
+  max-height: 1200px;
+  opacity: 1;
 }
 
 .dialog-footer {

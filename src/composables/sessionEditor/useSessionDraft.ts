@@ -21,6 +21,18 @@ export type SessionDraft = DraftWorkoutSession & {
 
 const DEFAULT_CARDIO_DURATION = 30
 
+const createDraftKey = (): string => {
+  const globalCrypto = typeof globalThis !== 'undefined' ? globalThis.crypto : undefined
+  if (globalCrypto?.randomUUID) {
+    try {
+      return globalCrypto.randomUUID()
+    } catch {
+      // Fall back to manual generation if randomUUID throws.
+    }
+  }
+  return `draft-${Date.now()}-${Math.random().toString(16).slice(2)}`
+}
+
 const mealTypes: MealType[] = ['breakfast', 'lunch', 'dinner']
 
 const mealLabels: Record<MealType, string> = {
@@ -36,12 +48,27 @@ const createEmptySet = (): DraftWorkoutSet => ({
   note: '',
 })
 
-const createEmptyEntry = (): DraftWorkoutEntry => ({
-  exerciseId: '',
-  note: '',
-  sets: [createEmptySet()],
-  durationMinutes: 0,
-})
+const createEmptyEntry = (category: ExerciseCategory = 'strength'): DraftWorkoutEntry => {
+  if (category === 'cardio') {
+    return {
+      draftKey: createDraftKey(),
+      exerciseId: '',
+      note: '',
+      sets: [],
+      durationMinutes: DEFAULT_CARDIO_DURATION,
+      categoryHint: 'cardio',
+    }
+  }
+
+  return {
+    draftKey: createDraftKey(),
+    exerciseId: '',
+    note: '',
+    sets: [createEmptySet()],
+    durationMinutes: 0,
+    categoryHint: 'strength',
+  }
+}
 
 const createEmptyMealItem = (mealType: MealType): DraftNutritionItem => ({
   mealType,
@@ -97,7 +124,14 @@ export const useSessionDraft = ({ date, session, exercises }: UseSessionDraftOpt
   const getExerciseCategory = (exerciseId: string): ExerciseCategory =>
     getExerciseById(exerciseId)?.category ?? 'strength'
 
-  const isCardioEntry = (entry: DraftWorkoutEntry) => getExerciseCategory(entry.exerciseId) === 'cardio'
+  const resolveEntryCategory = (entry: DraftWorkoutEntry): ExerciseCategory => {
+    if (entry.exerciseId) {
+      return getExerciseCategory(entry.exerciseId)
+    }
+    return entry.categoryHint ?? 'strength'
+  }
+
+  const isCardioEntry = (entry: DraftWorkoutEntry) => resolveEntryCategory(entry) === 'cardio'
 
   const ensureStrengthSets = (entry: DraftWorkoutEntry) => {
     if (!entry.sets.length) {
@@ -106,7 +140,8 @@ export const useSessionDraft = ({ date, session, exercises }: UseSessionDraftOpt
   }
 
   const syncEntryWithExercise = (entry: DraftWorkoutEntry) => {
-    const category = getExerciseCategory(entry.exerciseId)
+    const category = resolveEntryCategory(entry)
+    entry.categoryHint = category
     if (category === 'cardio') {
       entry.sets = []
       const duration = Number(entry.durationMinutes)
@@ -144,6 +179,7 @@ export const useSessionDraft = ({ date, session, exercises }: UseSessionDraftOpt
       note: source.note ?? '',
       entries: source.entries.map((entry) => ({
         id: entry.id,
+        draftKey: entry.id ?? createDraftKey(),
         exerciseId: entry.exerciseId,
         note: entry.note ?? '',
         sets: entry.sets.map((set) => ({
@@ -154,6 +190,7 @@ export const useSessionDraft = ({ date, session, exercises }: UseSessionDraftOpt
           note: set.note ?? '',
         })),
         durationMinutes: entry.durationMinutes ?? 0,
+        categoryHint: getExerciseCategory(entry.exerciseId),
       })),
       nutrition: (() => {
         const nutritionDraft = createEmptyNutritionDraft()
@@ -182,8 +219,10 @@ export const useSessionDraft = ({ date, session, exercises }: UseSessionDraftOpt
     })
   }
 
-  const addEntry = () => {
-    draft.value.entries.push(createEmptyEntry())
+  const addEntry = (category: ExerciseCategory = 'strength') => {
+    const entry = createEmptyEntry(category)
+    draft.value.entries.push(entry)
+    return entry
   }
 
   const removeEntry = (index: number) => {

@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, reactive, watch } from 'vue'
 import { storeToRefs } from 'pinia'
-import { Timer } from '@element-plus/icons-vue'
+import { CaretBottom, CaretRight, Timer } from '@element-plus/icons-vue'
 
 import WorkoutSessionEditor from '@/components/workout/WorkoutSessionEditor.vue'
 import ExerciseManager from '@/components/workout/ExerciseManager.vue'
@@ -12,6 +12,7 @@ import { useHomeNutritionSummary } from '@/composables/home/useHomeNutritionSumm
 import { useHomeSessionDisplay } from '@/composables/home/useHomeSessionDisplay'
 import { useAuthStore } from '@/stores/authStore'
 import { useWorkoutStore } from '@/stores/workoutStore'
+import type { ExerciseCategory } from '@/types/workout'
 
 const workoutStore = useWorkoutStore()
 const authStore = useAuthStore()
@@ -42,15 +43,61 @@ const {
 
 // Workout entry formatting utilities for the detail pane.
 const {
+  CATEGORY_LABELS,
   entryHasSetNote,
   formatEntrySummary,
   getExerciseBodyPartLabel,
+  getExerciseCategory,
   getExerciseName,
   isCardioEntry,
 } = useHomeSessionDisplay({
   sessionForSelectedDate,
   exercises,
 })
+
+const DEFAULT_GROUP_ORDER: ExerciseCategory[] = ['strength', 'cardio']
+
+const collapsedGroups = reactive<Record<ExerciseCategory, boolean>>({
+  strength: false,
+  cardio: false,
+})
+
+const derivedGroupOrder = computed<ExerciseCategory[]>(() => {
+  const entries = sessionForSelectedDate.value?.entries ?? []
+  const seen = new Set<ExerciseCategory>()
+  const order: ExerciseCategory[] = []
+  for (const entry of entries) {
+    const category = getExerciseCategory(entry.exerciseId)
+    if (!seen.has(category)) {
+      seen.add(category)
+      order.push(category)
+    }
+  }
+  for (const category of DEFAULT_GROUP_ORDER) {
+    if (!seen.has(category)) {
+      order.push(category)
+    }
+  }
+  return order
+})
+
+const entryGroups = computed(() => {
+  const entries = sessionForSelectedDate.value?.entries ?? []
+  return derivedGroupOrder.value
+    .map((category) => {
+      const groupEntries = entries.filter((entry) => getExerciseCategory(entry.exerciseId) === category)
+      return {
+        category,
+        label: CATEGORY_LABELS[category],
+        entries: groupEntries,
+      }
+    })
+    .filter((group) => group.entries.length > 0)
+})
+
+const toggleGroupCollapsed = (category: ExerciseCategory) => {
+  collapsedGroups[category] = !collapsedGroups[category]
+}
 
 // Nutrition summary derived from the selected session.
 const {
@@ -94,6 +141,14 @@ const {
 
 const isCoachDay = (dateKey: string) => Boolean(calendarSummaryByDate.value[dateKey]?.isCoachSession)
 const isCoachForSelectedDate = computed(() => Boolean(sessionForSelectedDate.value?.isCoachSession))
+
+watch(
+  () => sessionForSelectedDate.value?.id,
+  () => {
+    collapsedGroups.strength = false
+    collapsedGroups.cardio = false
+  },
+)
 
 onMounted(() => {
   void initializeAuth()
@@ -235,53 +290,73 @@ onMounted(() => {
                 {{ sessionForSelectedDate.note }}
               </p>
               <div v-if="sessionForSelectedDate.entries.length" class="entry-list">
-                <div
-                  v-for="entry in sessionForSelectedDate.entries"
-                  :key="entry.id"
-                  class="entry-card"
+                <section
+                  v-for="group in entryGroups"
+                  :key="group.category"
+                  class="entry-group"
                 >
-                  <div class="entry-header">
-                    <div>
-                      <h3 class="exercise-name">{{ getExerciseName(entry.exerciseId) }}</h3>
-                      <span class="entry-body-part">{{ getExerciseBodyPartLabel(entry.exerciseId) }}</span>
+                  <header class="entry-group-header">
+                    <el-button link class="group-toggle" @click="toggleGroupCollapsed(group.category)">
+                      <el-icon class="group-toggle-icon">
+                        <CaretBottom v-if="!collapsedGroups[group.category]" />
+                        <CaretRight v-else />
+                      </el-icon>
+                      <span class="group-title">{{ group.label }}</span>
+                      <span class="group-count">（{{ group.entries.length }}）</span>
+                    </el-button>
+                  </header>
+                  <transition name="group-collapse">
+                    <div v-show="!collapsedGroups[group.category]" class="entry-group-body">
+                      <div
+                        v-for="entry in group.entries"
+                        :key="entry.id ?? `${group.category}-${entry.exerciseId}`"
+                        class="entry-card"
+                      >
+                        <div class="entry-header">
+                          <div>
+                            <h3 class="exercise-name">{{ getExerciseName(entry.exerciseId) }}</h3>
+                            <span class="entry-body-part">{{ getExerciseBodyPartLabel(entry.exerciseId) }}</span>
+                          </div>
+                          <span class="set-count">{{ formatEntrySummary(entry) }}</span>
+                        </div>
+                        <p v-if="entry.note" class="entry-note">{{ entry.note }}</p>
+                        <div v-if="isCardioEntry(entry)" class="cardio-summary">
+                          <el-icon><Timer /></el-icon>
+                          <span class="cardio-summary-label">時長</span>
+                          <span class="cardio-summary-value">{{ entry.durationMinutes ?? 0 }} 分鐘</span>
+                        </div>
+                        <el-table
+                          v-else
+                          :data="entry.sets"
+                          size="small"
+                          border
+                          row-key="id"
+                          class="set-table"
+                        >
+                          <el-table-column prop="weight" label="重量" width="100%">
+                            <template #default="{ row }">{{ row.weight }}</template>
+                          </el-table-column>
+                          <el-table-column prop="unit" label="單位" width="80">
+                            <template #default="{ row }">{{ row.unit }}</template>
+                          </el-table-column>
+                          <el-table-column prop="reps" label="次數" width="100%">
+                            <template #default="{ row }">{{ row.reps }}</template>
+                          </el-table-column>
+                          <el-table-column
+                            v-if="entryHasSetNote(entry)"
+                            prop="note"
+                            label="備註"
+                          >
+                            <template #default="{ row }">
+                              <span v-if="row.note">{{ row.note }}</span>
+                              <span v-else class="muted">—</span>
+                            </template>
+                          </el-table-column>
+                        </el-table>
+                      </div>
                     </div>
-                    <span class="set-count">{{ formatEntrySummary(entry) }}</span>
-                  </div>
-                  <p v-if="entry.note" class="entry-note">{{ entry.note }}</p>
-                  <div v-if="isCardioEntry(entry)" class="cardio-summary">
-                    <el-icon><Timer /></el-icon>
-                    <span class="cardio-summary-label">時長</span>
-                    <span class="cardio-summary-value">{{ entry.durationMinutes ?? 0 }} 分鐘</span>
-                  </div>
-                  <el-table
-                    v-else
-                    :data="entry.sets"
-                    size="small"
-                    border
-                    row-key="id"
-                    class="set-table"
-                  >
-                    <el-table-column prop="weight" label="重量" width="100%">
-                      <template #default="{ row }">{{ row.weight }}</template>
-                    </el-table-column>
-                    <el-table-column prop="unit" label="單位" width="80">
-                      <template #default="{ row }">{{ row.unit }}</template>
-                    </el-table-column>
-                    <el-table-column prop="reps" label="次數" width="100%">
-                      <template #default="{ row }">{{ row.reps }}</template>
-                    </el-table-column>
-                    <el-table-column
-                      v-if="entryHasSetNote(entry)"
-                      prop="note"
-                      label="備註"
-                    >
-                      <template #default="{ row }">
-                        <span v-if="row.note">{{ row.note }}</span>
-                        <span v-else class="muted">—</span>
-                      </template>
-                    </el-table-column>
-                  </el-table>
-                </div>
+                  </transition>
+                </section>
               </div>
               <el-empty
                 v-else
@@ -551,6 +626,67 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: 1rem;
+}
+
+.entry-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0.75rem 0.85rem;
+  border: 1px solid var(--el-border-color-light);
+  border-radius: 0.9rem;
+  background-color: var(--el-fill-color-light);
+}
+
+.entry-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.group-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: #1f2937;
+  font-weight: 600;
+  padding: 0;
+}
+
+.group-toggle-icon {
+  font-size: 1rem;
+}
+
+.group-title {
+  font-weight: 600;
+}
+
+.group-count {
+  color: #6b7280;
+}
+
+.entry-group-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.group-collapse-enter-active,
+.group-collapse-leave-active {
+  transition: max-height 0.2s ease, opacity 0.2s ease;
+}
+
+.group-collapse-enter-from,
+.group-collapse-leave-to {
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+}
+
+.group-collapse-enter-to,
+.group-collapse-leave-from {
+  max-height: 800px;
+  opacity: 1;
 }
 
 .entry-card {

@@ -67,6 +67,8 @@ export interface DraftWorkoutEntry {
   note?: string
   sets: DraftWorkoutSet[]
   durationMinutes?: number
+  draftKey?: string
+  categoryHint?: ExerciseCategory
 }
 
 export interface DraftNutritionItem {
