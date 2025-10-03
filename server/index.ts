@@ -192,6 +192,22 @@ const resolveTenant = (req: Request): string => sanitizeTenant(req.header('x-sto
 const isDuplicateColumnError = (error: unknown): boolean =>
   typeof error === 'object' && error !== null && 'code' in error && (error as { code?: string }).code === 'ER_DUP_FIELDNAME'
 
+const isDuplicateKeyError = (error: unknown): boolean =>
+  typeof error === 'object' && error !== null && 'code' in error && (error as { code?: string }).code === 'ER_DUP_KEYNAME'
+
+const ensureIndex = async (connection: PoolConnection, sql: string) => {
+  try {
+    await connection.query(sql)
+  } catch (error) {
+    if (!isDuplicateKeyError(error)) {
+      throw error
+    }
+  }
+}
+
+const buildInsertPlaceholders = (rowCount: number, columnCount: number): string =>
+  Array.from({ length: rowCount }, () => `(${Array.from({ length: columnCount }, () => '?').join(', ')})`).join(', ')
+
 const ensureSchema = async () => {
   const connection = await pool.getConnection()
   try {
@@ -259,7 +275,8 @@ const ensureSchema = async () => {
         PRIMARY KEY (tenant_id, id),
         CONSTRAINT fk_entries_session FOREIGN KEY (tenant_id, session_id) REFERENCES sessions(tenant_id, id) ON DELETE CASCADE,
         CONSTRAINT fk_entries_exercise FOREIGN KEY (tenant_id, exercise_id) REFERENCES exercises(tenant_id, id) ON DELETE RESTRICT,
-        INDEX idx_entries_session (tenant_id, session_id)
+        INDEX idx_entries_session (tenant_id, session_id),
+        INDEX idx_entries_session_sort (tenant_id, session_id, sort_order)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
     )
     await connection
@@ -283,7 +300,8 @@ const ensureSchema = async () => {
         sort_order INT NOT NULL,
         PRIMARY KEY (tenant_id, id),
         CONSTRAINT fk_sets_entry FOREIGN KEY (tenant_id, entry_id) REFERENCES session_entries(tenant_id, id) ON DELETE CASCADE,
-        INDEX idx_sets_entry (tenant_id, entry_id)
+        INDEX idx_sets_entry (tenant_id, entry_id),
+        INDEX idx_sets_entry_sort (tenant_id, entry_id, sort_order)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
     )
     await connection.query(
@@ -299,8 +317,21 @@ const ensureSchema = async () => {
         PRIMARY KEY (tenant_id, id),
         CONSTRAINT fk_nutrition_session FOREIGN KEY (tenant_id, session_id) REFERENCES sessions(tenant_id, id) ON DELETE CASCADE,
         INDEX idx_nutrition_session (tenant_id, session_id),
+        INDEX idx_nutrition_session_sort (tenant_id, session_id, sort_order),
         INDEX idx_nutrition_meal (tenant_id, meal_type)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+    )
+    await ensureIndex(
+      connection,
+      'CREATE INDEX idx_entries_session_sort ON session_entries (tenant_id, session_id, sort_order)',
+    )
+    await ensureIndex(
+      connection,
+      'CREATE INDEX idx_sets_entry_sort ON entry_sets (tenant_id, entry_id, sort_order)',
+    )
+    await ensureIndex(
+      connection,
+      'CREATE INDEX idx_nutrition_session_sort ON session_nutrition_items (tenant_id, session_id, sort_order)',
     )
   } finally {
     connection.release()
@@ -451,26 +482,34 @@ const withTransaction = async <T>(handler: (connection: PoolConnection) => Promi
 }
 
 const buildHydration = async (tenantId: string): Promise<HydrationPayload> => {
-  const [exerciseRows] = await pool.query<ExerciseRow[]>(
-    'SELECT id, name, category, body_part AS bodyPart, created_at AS createdAt, updated_at AS updatedAt FROM exercises WHERE tenant_id = ? ORDER BY name',
-    [tenantId],
-  )
-  const [sessionRows] = await pool.query<SessionRow[]>(
-    'SELECT id, date, note, water_ml AS waterMl, is_coach_session AS isCoachSession, created_at AS createdAt, updated_at AS updatedAt FROM sessions WHERE tenant_id = ? ORDER BY date',
-    [tenantId],
-  )
-  const [entryRows] = await pool.query<SessionEntryRow[]>(
-    'SELECT id, session_id AS sessionId, exercise_id AS exerciseId, note, duration_minutes AS durationMinutes, sort_order AS sortOrder FROM session_entries WHERE tenant_id = ? ORDER BY session_id, sort_order',
-    [tenantId],
-  )
-  const [setRows] = await pool.query<SetRow[]>(
-    'SELECT id, entry_id AS entryId, weight, unit, reps, note, sort_order AS sortOrder FROM entry_sets WHERE tenant_id = ? ORDER BY entry_id, sort_order',
-    [tenantId],
-  )
-  const [nutritionRows] = await pool.query<NutritionRow[]>(
-    'SELECT id, session_id AS sessionId, meal_type AS mealType, name, calories, note, sort_order AS sortOrder FROM session_nutrition_items WHERE tenant_id = ? ORDER BY session_id, sort_order',
-    [tenantId],
-  )
+  const [exerciseQuery, sessionQuery, entryQuery, setQuery, nutritionQuery] = await Promise.all([
+    pool.query<ExerciseRow[]>(
+      'SELECT id, name, category, body_part AS bodyPart, created_at AS createdAt, updated_at AS updatedAt FROM exercises WHERE tenant_id = ? ORDER BY name',
+      [tenantId],
+    ),
+    pool.query<SessionRow[]>(
+      'SELECT id, date, note, water_ml AS waterMl, is_coach_session AS isCoachSession, created_at AS createdAt, updated_at AS updatedAt FROM sessions WHERE tenant_id = ? ORDER BY date',
+      [tenantId],
+    ),
+    pool.query<SessionEntryRow[]>(
+      'SELECT id, session_id AS sessionId, exercise_id AS exerciseId, note, duration_minutes AS durationMinutes, sort_order AS sortOrder FROM session_entries WHERE tenant_id = ? ORDER BY session_id, sort_order',
+      [tenantId],
+    ),
+    pool.query<SetRow[]>(
+      'SELECT id, entry_id AS entryId, weight, unit, reps, note, sort_order AS sortOrder FROM entry_sets WHERE tenant_id = ? ORDER BY entry_id, sort_order',
+      [tenantId],
+    ),
+    pool.query<NutritionRow[]>(
+      'SELECT id, session_id AS sessionId, meal_type AS mealType, name, calories, note, sort_order AS sortOrder FROM session_nutrition_items WHERE tenant_id = ? ORDER BY session_id, sort_order',
+      [tenantId],
+    ),
+  ])
+
+  const [exerciseRows] = exerciseQuery
+  const [sessionRows] = sessionQuery
+  const [entryRows] = entryQuery
+  const [setRows] = setQuery
+  const [nutritionRows] = nutritionQuery
 
   const exercises = exerciseRows.map(mapExerciseRow)
   const entriesBySession = new Map<string, SessionEntryRow[]>()
@@ -600,29 +639,31 @@ app.put('/api/exercises', async (req: Request, res: Response) => {
         await connection.query('DELETE FROM exercises WHERE tenant_id = ?', [tenantId])
       }
 
-      for (const exercise of exercises) {
+      const exerciseValues = exercises.map((exercise) => {
         const category: ExerciseCategory = exercise.category === 'cardio' ? 'cardio' : 'strength'
         const bodyPartValue = category === 'cardio' ? '' : exercise.bodyPart ?? ''
-        await connection.query(
-          `INSERT INTO exercises (tenant_id, id, name, category, body_part, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)
-           ON DUPLICATE KEY UPDATE
-             name = VALUES(name),
-             category = VALUES(category),
-             body_part = VALUES(body_part),
-             created_at = VALUES(created_at),
-             updated_at = VALUES(updated_at)`,
-          [
-            tenantId,
-            exercise.id,
-            exercise.name,
-            category,
-            bodyPartValue,
-            prepareTimestampForDb(exercise.createdAt, `exercise(${exercise.id}).createdAt`),
-            prepareTimestampForDb(exercise.updatedAt, `exercise(${exercise.id}).updatedAt`),
-          ],
-        )
-      }
+        return [
+          tenantId,
+          exercise.id,
+          exercise.name,
+          category,
+          bodyPartValue,
+          prepareTimestampForDb(exercise.createdAt, `exercise(${exercise.id}).createdAt`),
+          prepareTimestampForDb(exercise.updatedAt, `exercise(${exercise.id}).updatedAt`),
+        ]
+      })
+      const exercisePlaceholders = buildInsertPlaceholders(exerciseValues.length, 7)
+      await connection.query(
+        `INSERT INTO exercises (tenant_id, id, name, category, body_part, created_at, updated_at)
+         VALUES ${exercisePlaceholders}
+         ON DUPLICATE KEY UPDATE
+           name = VALUES(name),
+           category = VALUES(category),
+           body_part = VALUES(body_part),
+           created_at = VALUES(created_at),
+           updated_at = VALUES(updated_at)`,
+        exerciseValues.flat(),
+      )
     })
 
     res.sendStatus(204)
@@ -651,88 +692,97 @@ app.put('/api/sessions', async (req: Request, res: Response) => {
         return
       }
 
-      for (const session of sessions) {
-        await connection.query(
-          `INSERT INTO sessions (tenant_id, id, date, note, water_ml, is_coach_session, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            tenantId,
-            session.id,
-            prepareDateForDb(session.date, `session(${session.id}).date`),
-            session.note ?? null,
-            session.nutrition?.waterIntakeMl ?? 0,
-            session.isCoachSession ? 1 : 0,
-            prepareTimestampForDb(session.createdAt, `session(${session.id}).createdAt`),
-            prepareTimestampForDb(session.updatedAt, `session(${session.id}).updatedAt`),
-          ],
-        )
+      const sessionValues: unknown[][] = []
+      const entryValues: unknown[][] = []
+      const setValues: unknown[][] = []
+      const nutritionValues: unknown[][] = []
+      const mealTypes: MealType[] = ['breakfast', 'lunch', 'dinner']
 
-        for (let entryIndex = 0; entryIndex < session.entries.length; entryIndex += 1) {
-          const entry = session.entries[entryIndex]!
+      for (const session of sessions) {
+        sessionValues.push([
+          tenantId,
+          session.id,
+          prepareDateForDb(session.date, `session(${session.id}).date`),
+          session.note ?? null,
+          session.nutrition?.waterIntakeMl ?? 0,
+          session.isCoachSession ? 1 : 0,
+          prepareTimestampForDb(session.createdAt, `session(${session.id}).createdAt`),
+          prepareTimestampForDb(session.updatedAt, `session(${session.id}).updatedAt`),
+        ])
+
+        session.entries.forEach((entry, entryIndex) => {
           const durationMinutes =
             typeof entry.durationMinutes === 'number' && entry.durationMinutes > 0
               ? Math.round(entry.durationMinutes)
               : 0
-          await connection.query(
-            `INSERT INTO session_entries (tenant_id, id, session_id, exercise_id, note, duration_minutes, sort_order)
-             VALUES (?, ?, ?, ?, ?, ?, ?)`
-            ,
-            [
-              tenantId,
-              entry.id,
-              session.id,
-              entry.exerciseId,
-              entry.note ?? null,
-              durationMinutes,
-              entryIndex,
-            ],
-          )
 
-          for (let setIndex = 0; setIndex < entry.sets.length; setIndex += 1) {
-            const set = entry.sets[setIndex]!
-            await connection.query(
-              `INSERT INTO entry_sets (tenant_id, id, entry_id, weight, unit, reps, note, sort_order)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-              ,
-              [
-                tenantId,
-                set.id,
-                entry.id,
-                set.weight,
-                set.unit,
-                set.reps,
-                set.note ?? null,
-                setIndex,
-              ],
-            )
-          }
-        }
+          entryValues.push([
+            tenantId,
+            entry.id,
+            session.id,
+            entry.exerciseId,
+            entry.note ?? null,
+            durationMinutes,
+            entryIndex,
+          ])
+
+          entry.sets.forEach((set, setIndex) => {
+            setValues.push([
+              tenantId,
+              set.id,
+              entry.id,
+              set.weight,
+              set.unit,
+              set.reps,
+              set.note ?? null,
+              setIndex,
+            ])
+          })
+        })
 
         if (session.nutrition?.meals) {
-          const mealTypes: MealType[] = ['breakfast', 'lunch', 'dinner']
-          for (const mealType of mealTypes) {
-            const meals = session.nutrition.meals[mealType] ?? []
-            for (let index = 0; index < meals.length; index += 1) {
-              const meal = meals[index]!
-              await connection.query(
-                `INSERT INTO session_nutrition_items (tenant_id, id, session_id, meal_type, name, calories, note, sort_order)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-                ,
-                [
-                  tenantId,
-                  meal.id,
-                  session.id,
-                  mealType,
-                  meal.name,
-                  meal.calories,
-                  meal.note ?? null,
-                  index,
-                ],
-              )
-            }
-          }
+          mealTypes.forEach((mealType) => {
+            const meals = session.nutrition?.meals?.[mealType] ?? []
+            meals.forEach((meal, index) => {
+              nutritionValues.push([
+                tenantId,
+                meal.id,
+                session.id,
+                mealType,
+                meal.name,
+                meal.calories,
+                meal.note ?? null,
+                index,
+              ])
+            })
+          })
         }
       }
+
+      const runBulkInsert = async (baseSql: string, values: unknown[][]) => {
+        if (!values.length) {
+          return
+        }
+        const placeholders = buildInsertPlaceholders(values.length, values[0]!.length)
+        await connection.query(`${baseSql} VALUES ${placeholders}`, values.flat())
+      }
+
+      await runBulkInsert(
+        'INSERT INTO sessions (tenant_id, id, date, note, water_ml, is_coach_session, created_at, updated_at)',
+        sessionValues,
+      )
+      await runBulkInsert(
+        'INSERT INTO session_entries (tenant_id, id, session_id, exercise_id, note, duration_minutes, sort_order)',
+        entryValues,
+      )
+      await runBulkInsert(
+        'INSERT INTO entry_sets (tenant_id, id, entry_id, weight, unit, reps, note, sort_order)',
+        setValues,
+      )
+      await runBulkInsert(
+        'INSERT INTO session_nutrition_items (tenant_id, id, session_id, meal_type, name, calories, note, sort_order)',
+        nutritionValues,
+      )
     })
 
     res.sendStatus(204)
