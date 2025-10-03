@@ -59,20 +59,10 @@ export const useHomeCalendar = ({
     selectedDate.value = new Date()
   }
 
-  // Re-hydrates workout data and ensures we land on a meaningful default date.
+  // Re-hydrates workout data and snaps the calendar to today's date for faster entry after login.
   const ensureHydrated = async () => {
-    const hydration = await hydrateFromPersistence()
-
-    const todayKey = formatDateKey(new Date())
-    if (sessionByDate.value(todayKey)) {
-      selectDateKey(todayKey)
-      return
-    }
-
-    const fallbackDate = hydration?.sessions[0]?.date ?? sessionDates.value[0]
-    if (fallbackDate) {
-      selectDateKey(fallbackDate)
-    }
+    await hydrateFromPersistence()
+    resetSelection()
   }
 
   // When the date changes via calendar interaction we smooth-scroll the detail panel into view.
