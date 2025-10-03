@@ -6,6 +6,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { useExerciseManagerForm } from '@/composables/exerciseManager/useExerciseManagerForm'
 import { useWorkoutStore } from '@/stores/workoutStore'
 import type { ExerciseCategory, ExerciseDefinition } from '@/types/workout'
+import { useResponsiveDialog } from '@/composables/useResponsiveDialog'
 
 interface Props {
   modelValue: boolean
@@ -40,6 +41,16 @@ const {
 } = useExerciseManagerForm()
 
 const usageFor = (exerciseId: string) => exerciseUsageById.value(exerciseId)
+
+const {
+  dialogTop: managerDialogTop,
+  dialogWidth: managerDialogWidth,
+  isMobile: isManagerDialogMobile,
+} = useResponsiveDialog({
+  desktopWidth: 720,
+  mobileHorizontalPadding: 32,
+  mobileTop: '4vh',
+})
 
 const closeDialog = () => {
   emit('update:modelValue', false)
@@ -174,7 +185,14 @@ const formatCategory = (category: ExerciseCategory) => CATEGORY_LABELS[category]
 
 
 <template>
-  <el-dialog :model-value="isVisible" title="訓練動作管理" width="720px" @close="closeDialog">
+  <el-dialog
+    :model-value="isVisible"
+    title="訓練動作管理"
+    :width="managerDialogWidth"
+    :top="managerDialogTop"
+    :class="['exercise-manager-dialog', { 'is-compact': isManagerDialogMobile }]"
+    @close="closeDialog"
+  >
     <div class="manager-toolbar">
       <div>
         <strong>總數：</strong>{{ exerciseList.length }}
@@ -218,45 +236,47 @@ const formatCategory = (category: ExerciseCategory) => CATEGORY_LABELS[category]
       </div>
     </el-form>
 
-    <el-table :data="exerciseList" border stripe class="exercise-table" size="small">
-      <el-table-column prop="name" label="名稱" min-width="160" />
-      <el-table-column label="分類" width="120">
-        <template #default="{ row }">
-          {{ formatCategory(row.category) }}
-        </template>
-      </el-table-column>
-      <el-table-column label="身體部位" min-width="140">
-        <template #default="{ row }">
-          <span v-if="row.category === 'strength' && row.bodyPart">{{ row.bodyPart }}</span>
-          <span v-else class="muted">—</span>
-        </template>
-      </el-table-column>
-      <el-table-column label="使用情況" min-width="140">
-        <template #default="{ row }">
-          <div>
-            <span>Session：{{ usageFor(row.id).sessionCount }}</span>
-          </div>
-          <div class="usage-sub">Entry：{{ usageFor(row.id).entryCount }}</div>
-        </template>
-      </el-table-column>
-      <el-table-column label="建立 / 更新" min-width="180">
-        <template #default="{ row }">
-          <div class="timestamp">建立：{{ formatTimestamp(row.createdAt) }}</div>
-          <div class="timestamp">更新：{{ formatTimestamp(row.updatedAt) }}</div>
-        </template>
-      </el-table-column>
-      <el-table-column label="操作" width="160">
-        <template #default="{ row }">
-          <el-button type="primary" link @click="startEdit(row)" :disabled="isReadOnly">
-            編輯
-          </el-button>
-          <el-divider direction="vertical" />
-          <el-button type="danger" link @click="handleDelete(row)" :disabled="isReadOnly">
-            刪除
-          </el-button>
-        </template>
-      </el-table-column>
-    </el-table>
+    <div class="exercise-table-wrapper">
+      <el-table :data="exerciseList" border stripe class="exercise-table" size="small">
+        <el-table-column prop="name" label="名稱" min-width="160" />
+        <el-table-column label="分類" width="120">
+          <template #default="{ row }">
+            {{ formatCategory(row.category) }}
+          </template>
+        </el-table-column>
+        <el-table-column label="身體部位" min-width="140">
+          <template #default="{ row }">
+            <span v-if="row.category === 'strength' && row.bodyPart">{{ row.bodyPart }}</span>
+            <span v-else class="muted">—</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="使用情況" min-width="140">
+          <template #default="{ row }">
+            <div>
+              <span>Session：{{ usageFor(row.id).sessionCount }}</span>
+            </div>
+            <div class="usage-sub">Entry：{{ usageFor(row.id).entryCount }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column label="建立 / 更新" min-width="180">
+          <template #default="{ row }">
+            <div class="timestamp">建立：{{ formatTimestamp(row.createdAt) }}</div>
+            <div class="timestamp">更新：{{ formatTimestamp(row.updatedAt) }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="160">
+          <template #default="{ row }">
+            <el-button type="primary" link @click="startEdit(row)" :disabled="isReadOnly">
+              編輯
+            </el-button>
+            <el-divider direction="vertical" />
+            <el-button type="danger" link @click="handleDelete(row)" :disabled="isReadOnly">
+              刪除
+            </el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </div>
   </el-dialog>
 </template>
 
@@ -298,5 +318,36 @@ const formatCategory = (category: ExerciseCategory) => CATEGORY_LABELS[category]
 
 .muted {
   color: #9ca3af;
+}
+
+.exercise-table-wrapper {
+  overflow-x: auto;
+}
+
+.exercise-manager-dialog.is-compact :deep(.el-dialog__header) {
+  padding: 1rem;
+}
+
+.exercise-manager-dialog.is-compact :deep(.el-dialog__body) {
+  max-height: calc(100vh - 160px);
+  overflow-y: auto;
+  padding: 1rem;
+}
+
+@media (max-width: 768px) {
+  .manager-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.75rem;
+  }
+
+  .exercise-form {
+    padding: 0.75rem;
+  }
+
+  .form-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
 }
 </style>

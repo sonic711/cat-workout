@@ -7,6 +7,7 @@ import Draggable from 'vuedraggable'
 
 import { useSessionDraft } from '@/composables/sessionEditor/useSessionDraft'
 import { useExerciseDialog } from '@/composables/sessionEditor/useExerciseDialog'
+import { useResponsiveDialog } from '@/composables/useResponsiveDialog'
 import type { SessionDraft } from '@/composables/sessionEditor/useSessionDraft'
 import { useWorkoutStore } from '@/stores/workoutStore'
 import type { ExerciseCategory, ExerciseDefinition, MealType, WorkoutSession } from '@/types/workout'
@@ -98,6 +99,25 @@ const collapsedState = reactive<Record<ExerciseCategory, boolean>>({
   strength: false,
   cardio: false,
 })
+
+const {
+  dialogTop: sessionDialogTop,
+  dialogWidth: sessionDialogWidth,
+  isMobile: isCompactLayout,
+  viewportWidth,
+} = useResponsiveDialog({
+  desktopWidth: 720,
+  mobileHorizontalPadding: 32,
+  mobileTop: '4vh',
+})
+
+const exerciseDialogWidth = computed(() => {
+  const availableWidth = Math.max(viewportWidth.value - 32, 280)
+  const width = Math.min(availableWidth, 360)
+  return `${width}px`
+})
+
+const exerciseDialogTop = computed(() => (isCompactLayout.value ? '8vh' : '15vh'))
 
 const closeDialog = () => {
   emit('update:modelValue', false)
@@ -493,7 +513,14 @@ watch(
 
 
 <template>
-  <el-dialog :model-value="isVisible" title="管理訓練紀錄" width="720px" class="session-editor-dialog" @close="closeDialog">
+  <el-dialog
+    :model-value="isVisible"
+    title="管理訓練紀錄"
+    :width="sessionDialogWidth"
+    :top="sessionDialogTop"
+    :class="['session-editor-dialog', { 'is-compact': isCompactLayout }]"
+    @close="closeDialog"
+  >
     <div class="dialog-content">
       <el-alert
         v-if="isReadOnly"
@@ -789,7 +816,9 @@ watch(
   <el-dialog
     v-model="exerciseDialogVisible"
     title="新增訓練動作"
-    width="360px"
+    :width="exerciseDialogWidth"
+    :top="exerciseDialogTop"
+    :class="['exercise-dialog', { 'is-compact': isCompactLayout }]"
     @closed="resetExerciseDialog"
   >
     <el-form label-width="80px" class="exercise-form">
@@ -1143,5 +1172,83 @@ watch(
 .meal-calories .unit {
   color: #6b7280;
   font-size: 0.85rem;
+}
+
+.session-editor-dialog.is-compact :deep(.el-dialog__header) {
+  padding: 1rem;
+}
+
+.session-editor-dialog.is-compact :deep(.el-dialog__body) {
+  max-height: calc(100vh - 160px);
+  padding: 1rem;
+  padding-right: 1rem;
+}
+
+.exercise-dialog.is-compact :deep(.el-dialog__header) {
+  padding: 1rem;
+}
+
+.exercise-dialog.is-compact :deep(.el-dialog__body) {
+  max-height: calc(100vh - 140px);
+  overflow-y: auto;
+  padding: 1rem;
+}
+
+@media (max-width: 768px) {
+  .dialog-content {
+    gap: 1rem;
+  }
+
+  .session-header {
+    gap: 0.5rem;
+  }
+
+  .session-flags {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  .entry-header {
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  .entry-drag-handle {
+    order: -1;
+  }
+
+  .group-header-right {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 0.5rem;
+  }
+
+  .dialog-footer {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .water-intake-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .water-intake-row label {
+    min-width: 0;
+  }
+
+  .cardio-duration {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .cardio-duration-input {
+    width: 100%;
+  }
+
+  .meal-grid {
+    grid-template-columns: 1fr;
+  }
 }
 </style>
