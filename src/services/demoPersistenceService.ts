@@ -1,5 +1,25 @@
 import type { PersistenceService } from './persistenceService'
-import type { DailyNutrition, HydrationPayload, MealType } from '@/types/workout'
+import type {
+  DailyNutrition,
+  ExerciseDefinition,
+  HydrationPayload,
+  MealType,
+  CreateExercisePayload,
+  UpdateExercisePayload,
+} from '@/types/workout'
+
+const fallbackId = () => `id-${Math.random().toString(36).slice(2, 11)}`
+
+const generateId = () => {
+  if (typeof globalThis.crypto !== 'undefined' && typeof globalThis.crypto.randomUUID === 'function') {
+    return globalThis.crypto.randomUUID()
+  }
+  return fallbackId()
+}
+
+const normalizeLabel = (value: string) => value.trim()
+
+const nowIso = () => new Date().toISOString()
 
 const cloneHydration = (payload: HydrationPayload): HydrationPayload => ({
   exercises: payload.exercises.map((exercise) => ({ ...exercise })),
@@ -189,14 +209,129 @@ const createSeedHydration = (): HydrationPayload => {
 export const createDemoPersistenceService = (): PersistenceService => {
   let state = createSeedHydration()
 
+  const isExerciseInUse = (exerciseId: string) =>
+    state.sessions.some((session) => session.entries.some((entry) => entry.exerciseId === exerciseId))
+
+  const findExerciseById = (exerciseId: string) =>
+    state.exercises.find((exercise) => exercise.id === exerciseId)
+
+  const findExerciseByNameCategory = (
+    name: string,
+    category: ExerciseDefinition['category'],
+    excludeId?: string,
+  ) => {
+    const targetName = name.toLowerCase()
+    return state.exercises.find(
+      (exercise) =>
+        exercise.id !== excludeId &&
+        exercise.category === category &&
+        exercise.name.toLowerCase() === targetName,
+    )
+  }
+
+  const cloneExercise = (exercise: ExerciseDefinition): ExerciseDefinition => ({ ...exercise })
+
   return {
     async loadHydration() {
       return cloneHydration(state)
     },
-    async saveExercises(exercises) {
+    async createExercise(payload: CreateExercisePayload) {
+      const name = normalizeLabel(payload.name)
+      if (!name) {
+        throw new Error('Exercise name is required.')
+      }
+
+      const category = payload.category === 'cardio' ? 'cardio' : 'strength'
+      let bodyPart: string | undefined
+      if (category === 'strength') {
+        bodyPart = normalizeLabel(payload.bodyPart ?? '')
+        if (!bodyPart) {
+          throw new Error('請輸入身體部位。')
+        }
+      }
+
+      const existing = findExerciseByNameCategory(name, category)
+      if (existing) {
+        return cloneExercise(existing)
+      }
+
+      const timestamp = nowIso()
+      const created: ExerciseDefinition = {
+        id: generateId(),
+        name,
+        category,
+        bodyPart,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      }
+
       state = {
         ...state,
-        exercises: exercises.map((exercise) => ({ ...exercise })),
+        exercises: [...state.exercises, created],
+      }
+
+      return cloneExercise(created)
+    },
+    async updateExercise(payload: UpdateExercisePayload) {
+      const target = findExerciseById(payload.id)
+      if (!target) {
+        throw new Error('找不到對應的訓練動作')
+      }
+
+      const name = normalizeLabel(payload.name)
+      if (!name) {
+        throw new Error('Exercise name is required.')
+      }
+
+      const category = payload.category === 'cardio' ? 'cardio' : 'strength'
+
+      if (category !== target.category && isExerciseInUse(target.id)) {
+        throw new Error('已有訓練紀錄使用此動作，無法變更分類。')
+      }
+
+      let bodyPart: string | undefined
+      if (category === 'strength') {
+        bodyPart = normalizeLabel(payload.bodyPart ?? target.bodyPart ?? '')
+        if (!bodyPart) {
+          throw new Error('請輸入身體部位。')
+        }
+      }
+
+      const duplicate = findExerciseByNameCategory(name, category, target.id)
+      if (duplicate) {
+        throw new Error('已有相同名稱的訓練動作，請使用其他名稱。')
+      }
+
+      const timestamp = nowIso()
+      const updated: ExerciseDefinition = {
+        ...target,
+        name,
+        category,
+        bodyPart,
+        updatedAt: timestamp,
+      }
+
+      state = {
+        ...state,
+        exercises: state.exercises.map((exercise) =>
+          exercise.id === updated.id ? updated : exercise,
+        ),
+      }
+
+      return cloneExercise(updated)
+    },
+    async deleteExercise(exerciseId: string) {
+      const target = findExerciseById(exerciseId)
+      if (!target) {
+        return
+      }
+      if (isExerciseInUse(exerciseId)) {
+        throw new Error('該訓練動作仍有訓練紀錄使用，請先調整訓練內容後再刪除。')
+      }
+
+      state = {
+        ...state,
+        exercises: state.exercises.filter((exercise) => exercise.id !== exerciseId),
       }
     },
     async saveSessions(sessions) {
@@ -213,7 +348,7 @@ export const createDemoPersistenceService = (): PersistenceService => {
       }
     },
     async clear() {
-      state = { exercises: [], sessions: [] }
+      state = { ...state, sessions: [] }
     },
   }
 }

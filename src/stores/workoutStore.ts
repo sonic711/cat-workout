@@ -54,11 +54,6 @@ export const useWorkoutStore = defineStore('workout', () => {
     }
   }
 
-  const persistExercises = async () => {
-    const service = getPersistenceService()
-    await service.saveExercises(Object.values(exercises.value))
-  }
-
   const persistSessions = async () => {
     const service = getPersistenceService()
     await service.saveSessions(Object.values(sessionsByDate.value))
@@ -125,10 +120,17 @@ export const useWorkoutStore = defineStore('workout', () => {
         exerciseUsage.value[exerciseId] ?? { sessionCount: 0, entryCount: 0 },
   )
 
-  const isNameTaken = (name: string, excludeId?: string) => {
+  const findExerciseByNameCategory = (
+    name: string,
+    category: ExerciseCategory,
+    excludeId?: string,
+  ): ExerciseDefinition | undefined => {
     const lower = name.toLowerCase()
-    return Object.values(exercises.value).some(
-      (exercise) => exercise.id !== excludeId && exercise.name.toLowerCase() === lower,
+    return Object.values(exercises.value).find(
+      (exercise) =>
+        exercise.id !== excludeId &&
+        exercise.category === category &&
+        exercise.name.toLowerCase() === lower,
     )
   }
 
@@ -196,18 +198,19 @@ export const useWorkoutStore = defineStore('workout', () => {
     }
   }
 
-  const registerExercise = (payload: CreateExercisePayload): ExerciseDefinition => {
+  const registerExercise = async (payload: CreateExercisePayload): Promise<ExerciseDefinition> => {
     ensureCanMutate('新增或更新訓練動作')
     const name = normalizeLabel(payload.name)
     if (!name) {
       throw new Error('Exercise name is required.')
     }
 
-    if (isNameTaken(name)) {
-      throw new Error('已有相同名稱的訓練動作，請使用其他名稱。')
-    }
-
     const category = isValidCategory(payload.category) ? payload.category : 'strength'
+
+    const existing = findExerciseByNameCategory(name, category)
+    if (existing) {
+      return existing
+    }
 
     let bodyPart: string | undefined
     if (category === 'strength') {
@@ -217,23 +220,26 @@ export const useWorkoutStore = defineStore('workout', () => {
       }
     }
 
-    const timestamp = nowIso()
-
-    const id = generateId()
-    const exercise: ExerciseDefinition = {
-      id,
-      name,
-      category,
-      bodyPart,
-      createdAt: timestamp,
-      updatedAt: timestamp,
+    try {
+      const service = getPersistenceService()
+      const created = await service.createExercise({
+        name,
+        category,
+        bodyPart,
+      })
+      const normalized = normalizePersistedExercise(created)
+      exercises.value[normalized.id] = normalized
+      return normalized
+    } catch (error) {
+      handlePersistenceError(error, 'create exercise')
+      if (error instanceof Error) {
+        throw error
+      }
+      throw new Error('新增訓練動作時發生錯誤，請稍後再試。')
     }
-    exercises.value[id] = exercise
-    void persistExercises().catch((error) => handlePersistenceError(error, 'save exercises'))
-    return exercise
   }
 
-  const updateExercise = (payload: UpdateExercisePayload): ExerciseDefinition => {
+  const updateExercise = async (payload: UpdateExercisePayload): Promise<ExerciseDefinition> => {
     ensureCanMutate('更新訓練動作')
     const target = exercises.value[payload.id]
     if (!target) {
@@ -245,20 +251,20 @@ export const useWorkoutStore = defineStore('workout', () => {
       throw new Error('Exercise name is required.')
     }
 
-    if (isNameTaken(name, target.id)) {
-      throw new Error('已有相同名稱的訓練動作，請使用其他名稱。')
-    }
-
-    const category = isValidCategory(payload.category) ? payload.category : target.category
-    if (category !== target.category) {
+    const requestedCategory = isValidCategory(payload.category) ? payload.category : target.category
+    if (requestedCategory !== target.category) {
       const usage = exerciseUsageById.value(target.id)
       if (usage.entryCount > 0) {
         throw new Error('已有訓練紀錄使用此動作，無法變更分類。')
       }
     }
 
+    if (findExerciseByNameCategory(name, requestedCategory, target.id)) {
+      throw new Error('已有相同名稱的訓練動作，請使用其他名稱。')
+    }
+
     let bodyPart: string | undefined
-    if (category === 'strength') {
+    if (requestedCategory === 'strength') {
       const bodyPartInput = payload.bodyPart ?? target.bodyPart ?? ''
       bodyPart = normalizeLabel(bodyPartInput)
       if (!bodyPart) {
@@ -266,22 +272,27 @@ export const useWorkoutStore = defineStore('workout', () => {
       }
     }
 
-    const timestamp = nowIso()
-
-    const updated: ExerciseDefinition = {
-      ...target,
-      name,
-      category,
-      bodyPart,
-      updatedAt: timestamp,
+    try {
+      const service = getPersistenceService()
+      const updated = await service.updateExercise({
+        id: target.id,
+        name,
+        category: requestedCategory,
+        bodyPart,
+      })
+      const normalized = normalizePersistedExercise(updated)
+      exercises.value[target.id] = normalized
+      return normalized
+    } catch (error) {
+      handlePersistenceError(error, 'update exercise')
+      if (error instanceof Error) {
+        throw error
+      }
+      throw new Error('更新訓練動作時發生錯誤，請稍後再試。')
     }
-
-    exercises.value[target.id] = updated
-    void persistExercises().catch((error) => handlePersistenceError(error, 'save exercises'))
-    return updated
   }
 
-  const removeExercise = (exerciseId: string) => {
+  const removeExercise = async (exerciseId: string) => {
     ensureCanMutate('刪除訓練動作')
     const target = exercises.value[exerciseId]
     if (!target) {
@@ -293,8 +304,17 @@ export const useWorkoutStore = defineStore('workout', () => {
       throw new Error('該訓練動作仍有訓練紀錄使用，請先調整訓練內容後再刪除。')
     }
 
-    delete exercises.value[exerciseId]
-    void persistExercises().catch((error) => handlePersistenceError(error, 'save exercises'))
+    try {
+      const service = getPersistenceService()
+      await service.deleteExercise(exerciseId)
+      delete exercises.value[exerciseId]
+    } catch (error) {
+      handlePersistenceError(error, 'delete exercise')
+      if (error instanceof Error) {
+        throw error
+      }
+      throw new Error('刪除訓練動作時發生錯誤，請稍後再試。')
+    }
   }
 
   const upsertSession = (draft: DraftWorkoutSession): WorkoutSession => {

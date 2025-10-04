@@ -1,4 +1,5 @@
 import express, { type Request, type Response } from 'express'
+import { randomUUID } from 'crypto'
 import { createPool, type Pool, type PoolConnection } from 'mysql2/promise'
 
 import {
@@ -14,7 +15,7 @@ interface ExerciseRow {
   id: string
   name: string
   category: string
-  bodyPart: string
+  bodyPart: string | null
   createdAt: Date | string
   updatedAt: Date | string
 }
@@ -199,6 +200,30 @@ const isDuplicateColumnError = (error: unknown): boolean =>
 const isDuplicateKeyError = (error: unknown): boolean =>
   typeof error === 'object' && error !== null && 'code' in error && (error as { code?: string }).code === 'ER_DUP_KEYNAME'
 
+const isDuplicateEntryError = (error: unknown): boolean =>
+  typeof error === 'object' && error !== null && 'code' in error && (error as { code?: string }).code === 'ER_DUP_ENTRY'
+
+const isMissingKeyOrColumnError = (error: unknown): boolean =>
+  typeof error === 'object' &&
+  error !== null &&
+  'code' in error &&
+  ((error as { code?: string }).code === 'ER_CANT_DROP_FIELD_OR_KEY' ||
+    (error as { code?: string }).code === 'ER_KEY_DOES_NOT_EXIST')
+
+const fallbackId = () => `id-${Math.random().toString(36).slice(2, 11)}`
+
+const generateId = () => {
+  try {
+    return randomUUID()
+  } catch {
+    return fallbackId()
+  }
+}
+
+const normalizeLabel = (value: unknown): string => (typeof value === 'string' ? value.trim() : '')
+
+const nowIso = () => new Date().toISOString()
+
 const ensureIndex = async (connection: PoolConnection, sql: string) => {
   try {
     await connection.query(sql)
@@ -217,16 +242,27 @@ const ensureSchema = async () => {
   try {
     await connection.query(
       `CREATE TABLE IF NOT EXISTS exercises (
-        tenant_id VARCHAR(128) NOT NULL,
         id VARCHAR(64) NOT NULL,
         name VARCHAR(255) NOT NULL,
         category VARCHAR(32) NOT NULL DEFAULT 'strength',
-        body_part VARCHAR(64) NOT NULL,
+        body_part VARCHAR(64) NULL,
         created_at DATETIME(6) NOT NULL,
         updated_at DATETIME(6) NOT NULL,
-        PRIMARY KEY (tenant_id, id),
-        INDEX idx_exercises_name (tenant_id, name)
+        PRIMARY KEY (id),
+        UNIQUE KEY uniq_exercises_name_category (name, category)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+    )
+    await connection
+      .query('ALTER TABLE exercises MODIFY body_part VARCHAR(64) NULL')
+      .catch((error) => {
+        if (!isDuplicateColumnError(error) && !isMissingKeyOrColumnError(error)) {
+          throw error
+        }
+      })
+    await deduplicateExercises(connection)
+    await ensureIndex(
+      connection,
+      'CREATE UNIQUE INDEX uniq_exercises_name_category ON exercises (name, category)',
     )
     await connection.query(
       `CREATE TABLE IF NOT EXISTS sessions (
@@ -286,11 +322,42 @@ const ensureSchema = async () => {
         sort_order INT NOT NULL,
         PRIMARY KEY (tenant_id, id),
         CONSTRAINT fk_entries_session FOREIGN KEY (tenant_id, session_id) REFERENCES sessions(tenant_id, id) ON DELETE CASCADE,
-        CONSTRAINT fk_entries_exercise FOREIGN KEY (tenant_id, exercise_id) REFERENCES exercises(tenant_id, id) ON DELETE RESTRICT,
+        CONSTRAINT fk_entries_exercise FOREIGN KEY (exercise_id) REFERENCES exercises(id) ON DELETE RESTRICT,
         INDEX idx_entries_session (tenant_id, session_id),
-        INDEX idx_entries_session_sort (tenant_id, session_id, sort_order)
+        INDEX idx_entries_session_sort (tenant_id, session_id, sort_order),
+        INDEX idx_entries_exercise (exercise_id)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
     )
+    await connection
+      .query('ALTER TABLE exercises DROP PRIMARY KEY')
+      .catch((error) => {
+        if (!isMissingKeyOrColumnError(error)) {
+          throw error
+        }
+      })
+    await connection
+      .query('ALTER TABLE exercises DROP COLUMN tenant_id')
+      .catch((error) => {
+        if (!isMissingKeyOrColumnError(error)) {
+          throw error
+        }
+      })
+    await connection
+      .query('ALTER TABLE exercises ADD PRIMARY KEY (id)')
+      .catch((error) => {
+        if (!isDuplicateKeyError(error)) {
+          throw error
+        }
+      })
+    await connection
+      .query(
+        'ALTER TABLE session_entries ADD CONSTRAINT fk_entries_exercise FOREIGN KEY (exercise_id) REFERENCES exercises(id) ON DELETE RESTRICT',
+      )
+      .catch((error) => {
+        if (!isDuplicateKeyError(error)) {
+          throw error
+        }
+      })
     await connection
       .query(
         'ALTER TABLE session_entries ADD COLUMN duration_minutes INT UNSIGNED NOT NULL DEFAULT 0 AFTER note',
@@ -352,11 +419,12 @@ const ensureSchema = async () => {
 
 const mapExerciseRow = (row: ExerciseRow): ExerciseDefinition => {
   const category: ExerciseCategory = row.category === 'cardio' ? 'cardio' : 'strength'
+  const bodyPartValue = typeof row.bodyPart === 'string' ? row.bodyPart.trim() : ''
   return {
     id: row.id,
     name: row.name,
     category,
-    bodyPart: category === 'strength' ? row.bodyPart : undefined,
+    bodyPart: category === 'strength' && bodyPartValue.length ? bodyPartValue : undefined,
     createdAt: normalizeTimestampFromDb(row.createdAt, `exercise(${row.id}).createdAt`),
     updatedAt: normalizeTimestampFromDb(row.updatedAt, `exercise(${row.id}).updatedAt`),
   }
@@ -380,26 +448,6 @@ const mapSessionRow = (
     waterIntakeMl: typeof row.waterMl === 'number' ? Number(row.waterMl) : 0,
     isCoachSession: Boolean(row.isCoachSession),
   }
-}
-
-const validateExercises = (payload: unknown): payload is ExerciseDefinition[] => {
-  return Array.isArray(payload) && payload.every((item) => {
-    if (!item || typeof item !== 'object') {
-      return false
-    }
-    const exercise = item as Partial<ExerciseDefinition>
-    const category = typeof exercise.category === 'string' ? exercise.category : 'strength'
-    if (category !== 'strength' && category !== 'cardio') {
-      return false
-    }
-    return (
-      typeof exercise.id === 'string' &&
-      typeof exercise.name === 'string' &&
-      (category === 'cardio' || typeof exercise.bodyPart === 'string') &&
-      typeof exercise.createdAt === 'string' &&
-      typeof exercise.updatedAt === 'string'
-    )
-  })
 }
 
 const validateSessions = (payload: unknown): payload is WorkoutSession[] => {
@@ -510,11 +558,108 @@ const withTransaction = async <T>(handler: (connection: PoolConnection) => Promi
   }
 }
 
+const fetchExerciseById = async (exerciseId: string): Promise<ExerciseDefinition | null> => {
+  const [rows] = await pool.query<ExerciseRow[]>(
+    'SELECT id, name, category, body_part AS bodyPart, created_at AS createdAt, updated_at AS updatedAt FROM exercises WHERE id = ? LIMIT 1',
+    [exerciseId],
+  )
+  if (!rows.length) {
+    return null
+  }
+  return mapExerciseRow(rows[0]!)
+}
+
+const fetchExerciseByNameCategory = async (
+  name: string,
+  category: ExerciseCategory,
+  excludeId?: string,
+): Promise<ExerciseDefinition | null> => {
+  const params: unknown[] = [name, category]
+  let sql =
+    'SELECT id, name, category, body_part AS bodyPart, created_at AS createdAt, updated_at AS updatedAt FROM exercises WHERE name = ? AND category = ?'
+  if (excludeId) {
+    sql += ' AND id <> ?'
+    params.push(excludeId)
+  }
+  sql += ' LIMIT 1'
+  const [rows] = await pool.query<ExerciseRow[]>(sql, params)
+  if (!rows.length) {
+    return null
+  }
+  return mapExerciseRow(rows[0]!)
+}
+
+const countExerciseUsage = async (exerciseId: string): Promise<number> => {
+  const [rows] = await pool.query<Array<{ usage: number }>>(
+    'SELECT COUNT(*) AS usage FROM session_entries WHERE exercise_id = ?',
+    [exerciseId],
+  )
+  const usage = rows[0]?.usage ?? 0
+  return typeof usage === 'number' ? Number(usage) : 0
+}
+
+const normalizeForDbTimestamp = (value: Date | string, context: string) => {
+  if (value instanceof Date) {
+    return prepareTimestampForDb(value.toISOString(), context)
+  }
+  return prepareTimestampForDb(value, context)
+}
+
+const deduplicateExercises = async (connection: PoolConnection) => {
+  type DuplicateRow = {
+    name: string
+    category: string
+    ids: string
+    minCreatedAt: Date | string
+    maxUpdatedAt: Date | string
+  }
+
+  const query = `SELECT name, category, GROUP_CONCAT(id ORDER BY created_at) AS ids,
+                        MIN(created_at) AS minCreatedAt,
+                        MAX(updated_at) AS maxUpdatedAt
+                 FROM exercises
+                 GROUP BY name, category
+                 HAVING COUNT(*) > 1`
+
+  const [duplicates] = await connection.query<DuplicateRow[]>(query)
+
+  if (!duplicates.length) {
+    return
+  }
+
+  await connection.query('SET FOREIGN_KEY_CHECKS = 0')
+  try {
+    for (const row of duplicates) {
+      const rawIds = row.ids?.split(',') ?? []
+      const ids = rawIds.map((id) => id.trim()).filter((id) => id.length > 0)
+      if (ids.length < 2) {
+        continue
+      }
+      const [keepId, ...duplicateIds] = ids
+      if (!keepId || !duplicateIds.length) {
+        continue
+      }
+
+      for (const duplicateId of duplicateIds) {
+        await connection.query('UPDATE session_entries SET exercise_id = ? WHERE exercise_id = ?', [keepId, duplicateId])
+      }
+      await connection.query('DELETE FROM exercises WHERE id IN (?)', [duplicateIds])
+      const createdAt = normalizeForDbTimestamp(row.minCreatedAt, `exercise(${keepId}).createdAt`)
+      const updatedAt = normalizeForDbTimestamp(row.maxUpdatedAt, `exercise(${keepId}).updatedAt`)
+      await connection.query(
+        'UPDATE exercises SET created_at = ?, updated_at = ? WHERE id = ?',
+        [createdAt, updatedAt, keepId],
+      )
+    }
+  } finally {
+    await connection.query('SET FOREIGN_KEY_CHECKS = 1')
+  }
+}
+
 const buildHydration = async (tenantId: string): Promise<HydrationPayload> => {
   const [exerciseQuery, sessionQuery, entryQuery, setQuery, nutritionQuery] = await Promise.all([
     pool.query<ExerciseRow[]>(
-      'SELECT id, name, category, body_part AS bodyPart, created_at AS createdAt, updated_at AS updatedAt FROM exercises WHERE tenant_id = ? ORDER BY name',
-      [tenantId],
+      'SELECT id, name, category, body_part AS bodyPart, created_at AS createdAt, updated_at AS updatedAt FROM exercises ORDER BY name',
     ),
     pool.query<SessionRow[]>(
       'SELECT id, date, note, body_weight_kg AS bodyWeightKg, water_ml AS waterMl, is_coach_session AS isCoachSession, created_at AS createdAt, updated_at AS updatedAt FROM sessions WHERE tenant_id = ? ORDER BY date',
@@ -668,63 +813,176 @@ app.get('/api/hydration', async (req: Request, res: Response) => {
   }
 })
 
-app.put('/api/exercises', async (req: Request, res: Response) => {
-  if (!validateExercises(req.body)) {
-    res.status(400).json({ message: 'Invalid exercise payload.' })
+app.post('/api/exercises', async (req: Request, res: Response) => {
+  const name = normalizeLabel(req.body?.name)
+  if (!name) {
+    res.status(400).json({ message: '請輸入動作名稱。' })
+    return
+  }
+
+  const rawCategory = normalizeLabel(req.body?.category)
+  const category: ExerciseCategory = rawCategory === 'cardio' ? 'cardio' : 'strength'
+
+  let bodyPart: string | null = null
+  if (category === 'strength') {
+    bodyPart = normalizeLabel(req.body?.bodyPart)
+    if (!bodyPart) {
+      res.status(400).json({ message: '請輸入身體部位。' })
+      return
+    }
+  }
+
+  try {
+    const existing = await fetchExerciseByNameCategory(name, category)
+    if (existing) {
+      res.status(200).json(existing)
+      return
+    }
+
+    const id = generateId()
+    const timestamp = nowIso()
+    await pool.query(
+      'INSERT INTO exercises (id, name, category, body_part, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
+      [
+        id,
+        name,
+        category,
+        bodyPart,
+        prepareTimestampForDb(timestamp, `exercise(${id}).createdAt`),
+        prepareTimestampForDb(timestamp, `exercise(${id}).updatedAt`),
+      ],
+    )
+
+    const created: ExerciseDefinition = {
+      id,
+      name,
+      category,
+      bodyPart: bodyPart ?? undefined,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    }
+
+    res.status(201).json(created)
+  } catch (error) {
+    if (isDuplicateEntryError(error)) {
+      try {
+        const duplicate = await fetchExerciseByNameCategory(name, category)
+        if (duplicate) {
+          res.status(200).json(duplicate)
+          return
+        }
+      } catch (lookupError) {
+        console.error('[API] Failed to resolve duplicate exercise', lookupError)
+      }
+    }
+    console.error('[API] Failed to create exercise', error)
+    res.status(500).json({ message: 'Failed to create exercise.' })
+  }
+})
+
+app.put('/api/exercises/:id', async (req: Request, res: Response) => {
+  const exerciseId = normalizeLabel(req.params.id)
+  if (!exerciseId) {
+    res.status(400).json({ message: 'Exercise id is required.' })
+    return
+  }
+
+  const name = normalizeLabel(req.body?.name)
+  if (!name) {
+    res.status(400).json({ message: '請輸入動作名稱。' })
+    return
+  }
+
+  const rawCategory = normalizeLabel(req.body?.category)
+  const category: ExerciseCategory = rawCategory === 'cardio' ? 'cardio' : 'strength'
+
+  let bodyPart: string | null = null
+  if (category === 'strength') {
+    bodyPart = normalizeLabel(req.body?.bodyPart)
+    if (!bodyPart) {
+      res.status(400).json({ message: '請輸入身體部位。' })
+      return
+    }
+  }
+
+  try {
+    const existing = await fetchExerciseById(exerciseId)
+    if (!existing) {
+      res.status(404).json({ message: '找不到對應的訓練動作。' })
+      return
+    }
+
+    if (category !== existing.category) {
+      const usage = await countExerciseUsage(exerciseId)
+      if (usage > 0) {
+        res.status(409).json({ message: '已有訓練紀錄使用此動作，無法變更分類。' })
+        return
+      }
+    }
+
+    const duplicate = await fetchExerciseByNameCategory(name, category, exerciseId)
+    if (duplicate) {
+      res.status(409).json({ message: '已有相同名稱的訓練動作，請使用其他名稱。' })
+      return
+    }
+
+    const timestamp = nowIso()
+    await pool.query(
+      'UPDATE exercises SET name = ?, category = ?, body_part = ?, updated_at = ? WHERE id = ?',
+      [
+        name,
+        category,
+        bodyPart,
+        prepareTimestampForDb(timestamp, `exercise(${exerciseId}).updatedAt`),
+        exerciseId,
+      ],
+    )
+
+    const updated: ExerciseDefinition = {
+      id: exerciseId,
+      name,
+      category,
+      bodyPart: category === 'strength' ? bodyPart ?? existing.bodyPart : undefined,
+      createdAt: existing.createdAt,
+      updatedAt: timestamp,
+    }
+
+    res.json(updated)
+  } catch (error) {
+    if (isDuplicateEntryError(error)) {
+      res.status(409).json({ message: '已有相同名稱的訓練動作，請使用其他名稱。' })
+      return
+    }
+    console.error('[API] Failed to update exercise', error)
+    res.status(500).json({ message: 'Failed to update exercise.' })
+  }
+})
+
+app.delete('/api/exercises/:id', async (req: Request, res: Response) => {
+  const exerciseId = normalizeLabel(req.params.id)
+  if (!exerciseId) {
+    res.status(400).json({ message: 'Exercise id is required.' })
     return
   }
 
   try {
-    const tenantId = resolveTenant(req)
-    await withTransaction(async (connection) => {
-      const exercises = req.body
-      if (!exercises.length) {
-        await connection.query('DELETE FROM entry_sets WHERE tenant_id = ?', [tenantId])
-        await connection.query('DELETE FROM session_entries WHERE tenant_id = ?', [tenantId])
-        await connection.query('DELETE FROM session_nutrition_items WHERE tenant_id = ?', [tenantId])
-        await connection.query('DELETE FROM sessions WHERE tenant_id = ?', [tenantId])
-        await connection.query('DELETE FROM exercises WHERE tenant_id = ?', [tenantId])
-        return
-      }
+    const existing = await fetchExerciseById(exerciseId)
+    if (!existing) {
+      res.sendStatus(204)
+      return
+    }
 
-      const ids = exercises.map((exercise) => exercise.id)
-      if (ids.length) {
-        await connection.query('DELETE FROM exercises WHERE tenant_id = ? AND id NOT IN (?)', [tenantId, ids])
-      } else {
-        await connection.query('DELETE FROM exercises WHERE tenant_id = ?', [tenantId])
-      }
+    const usage = await countExerciseUsage(exerciseId)
+    if (usage > 0) {
+      res.status(409).json({ message: '該訓練動作仍有訓練紀錄使用，請先調整訓練內容後再刪除。' })
+      return
+    }
 
-      const exerciseValues = exercises.map((exercise) => {
-        const category: ExerciseCategory = exercise.category === 'cardio' ? 'cardio' : 'strength'
-        const bodyPartValue = category === 'cardio' ? '' : exercise.bodyPart ?? ''
-        return [
-          tenantId,
-          exercise.id,
-          exercise.name,
-          category,
-          bodyPartValue,
-          prepareTimestampForDb(exercise.createdAt, `exercise(${exercise.id}).createdAt`),
-          prepareTimestampForDb(exercise.updatedAt, `exercise(${exercise.id}).updatedAt`),
-        ]
-      })
-      const exercisePlaceholders = buildInsertPlaceholders(exerciseValues.length, 7)
-      await connection.query(
-        `INSERT INTO exercises (tenant_id, id, name, category, body_part, created_at, updated_at)
-         VALUES ${exercisePlaceholders}
-         ON DUPLICATE KEY UPDATE
-           name = VALUES(name),
-           category = VALUES(category),
-           body_part = VALUES(body_part),
-           created_at = VALUES(created_at),
-           updated_at = VALUES(updated_at)`,
-        exerciseValues.flat(),
-      )
-    })
-
+    await pool.query('DELETE FROM exercises WHERE id = ?', [exerciseId])
     res.sendStatus(204)
   } catch (error) {
-    console.error('[API] Failed to save exercises', error)
-    res.status(500).json({ message: 'Failed to save exercises.' })
+    console.error('[API] Failed to delete exercise', error)
+    res.status(500).json({ message: 'Failed to delete exercise.' })
   }
 })
 
@@ -856,7 +1114,6 @@ app.delete('/api/data', async (req: Request, res: Response) => {
       await connection.query('DELETE FROM session_entries WHERE tenant_id = ?', [tenantId])
       await connection.query('DELETE FROM session_nutrition_items WHERE tenant_id = ?', [tenantId])
       await connection.query('DELETE FROM sessions WHERE tenant_id = ?', [tenantId])
-      await connection.query('DELETE FROM exercises WHERE tenant_id = ?', [tenantId])
     })
     res.sendStatus(204)
   } catch (error) {

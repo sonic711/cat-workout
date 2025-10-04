@@ -2,11 +2,15 @@ import type {
   ExerciseDefinition,
   HydrationPayload,
   WorkoutSession,
+  CreateExercisePayload,
+  UpdateExercisePayload,
 } from '@/types/workout'
 
 export interface PersistenceService {
   loadHydration(): Promise<HydrationPayload | null>
-  saveExercises(exercises: ExerciseDefinition[]): Promise<void>
+  createExercise(payload: CreateExercisePayload): Promise<ExerciseDefinition>
+  updateExercise(payload: UpdateExercisePayload): Promise<ExerciseDefinition>
+  deleteExercise(exerciseId: string): Promise<void>
   saveSessions(sessions: WorkoutSession[]): Promise<void>
   clear(): Promise<void>
 }
@@ -29,7 +33,9 @@ export const createNotImplementedService = (): PersistenceService => {
 
   return {
     loadHydration: () => notImplemented('loadHydration'),
-    saveExercises: () => notImplemented('saveExercises'),
+    createExercise: () => notImplemented('createExercise'),
+    updateExercise: () => notImplemented('updateExercise'),
+    deleteExercise: () => notImplemented('deleteExercise'),
     saveSessions: () => notImplemented('saveSessions'),
     clear: () => notImplemented('clear'),
   }

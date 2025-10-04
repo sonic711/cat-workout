@@ -76,7 +76,7 @@ const startEdit = (exercise: ExerciseDefinition) => {
   })
 }
 
-const handleSubmit = () => {
+const handleSubmit = async () => {
   if (isReadOnly.value) {
     ElMessage.info('目前為唯讀模式，僅能檢視訓練動作。')
     return
@@ -97,7 +97,7 @@ const handleSubmit = () => {
 
   try {
     if (mode.value === 'edit' && editingExerciseId.value) {
-      workoutStore.updateExercise({
+      await workoutStore.updateExercise({
         id: editingExerciseId.value,
         name,
         category,
@@ -105,7 +105,7 @@ const handleSubmit = () => {
       })
       ElMessage.success('已更新訓練動作')
     } else {
-      workoutStore.registerExercise({
+      await workoutStore.registerExercise({
         name,
         category,
         bodyPart: category === 'strength' ? bodyPart : undefined,
@@ -149,7 +149,7 @@ const handleDelete = async (exercise: ExerciseDefinition) => {
   }
 
   try {
-    workoutStore.removeExercise(exercise.id)
+    await workoutStore.removeExercise(exercise.id)
     ElMessage.success('已刪除訓練動作')
     if (editingExerciseId.value === exercise.id) {
       formStartCreate()

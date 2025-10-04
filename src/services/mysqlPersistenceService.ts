@@ -2,6 +2,8 @@ import type {
   ExerciseDefinition,
   HydrationPayload,
   WorkoutSession,
+  CreateExercisePayload,
+  UpdateExercisePayload,
 } from '@/types/workout'
 import {
   type PersistenceOptions,
@@ -81,14 +83,38 @@ export const createMysqlPersistenceService = (
       return payload ?? null
     },
 
-    async saveExercises(exercises: ExerciseDefinition[]) {
-      await request('/exercises', {
-        method: 'PUT',
-        body: JSON.stringify(exercises),
+    async createExercise(payload: CreateExercisePayload) {
+      const exercise = await request<ExerciseDefinition>('/exercises', {
+        method: 'POST',
+        body: JSON.stringify(payload),
         headers: { 'Content-Type': 'application/json' },
+      })
+      if (!exercise) {
+        throw new Error('Failed to create exercise.')
+      }
+      log('Created exercise', { id: exercise.id })
+      return exercise
+    },
+
+    async updateExercise(payload: UpdateExercisePayload) {
+      const exercise = await request<ExerciseDefinition>(`/exercises/${payload.id}`, {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+        headers: { 'Content-Type': 'application/json' },
+      })
+      if (!exercise) {
+        throw new Error('Failed to update exercise.')
+      }
+      log('Updated exercise', { id: exercise.id })
+      return exercise
+    },
+
+    async deleteExercise(exerciseId: string) {
+      await request(`/exercises/${exerciseId}`, {
+        method: 'DELETE',
         parseJson: false,
       })
-      log('Saved exercises', { count: exercises.length })
+      log('Deleted exercise', { id: exerciseId })
     },
 
     async saveSessions(sessions: WorkoutSession[]) {

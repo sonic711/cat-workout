@@ -331,7 +331,7 @@ const formatExerciseOptionLabel = (exercise: ExerciseDefinition): string => {
   return bodyPart?.length ? `${exercise.name}（${bodyPart}）` : exercise.name
 }
 
-const handleCreateExercise = () => {
+const handleCreateExercise = async () => {
   if (isReadOnly.value) {
     showReadOnlyInfo()
     return
@@ -351,7 +351,7 @@ const handleCreateExercise = () => {
   }
 
   try {
-    const created = workoutStore.registerExercise({
+    const created = await workoutStore.registerExercise({
       name,
       category,
       bodyPart: category === 'strength' ? bodyPart : undefined,
