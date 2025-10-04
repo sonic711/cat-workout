@@ -137,6 +137,7 @@ const guardMutation = (callback: () => void) => {
 }
 
 type DraftEntry = SessionDraft['entries'][number]
+type DraftSet = DraftEntry['sets'][number]
 
 const getEntryCategory = (entry: DraftEntry): ExerciseCategory => (isCardioEntry(entry) ? 'cardio' : 'strength')
 
@@ -293,6 +294,75 @@ const handleAddSet = (entry: DraftEntry) => {
 
 const handleRemoveSet = (entry: DraftEntry, index: number) => {
   guardMutation(() => removeSet(entry, index))
+}
+
+const findInputElement = (event: FocusEvent): HTMLInputElement | null => {
+  const target = event.target as HTMLElement | null
+  if (!target) {
+    return null
+  }
+  if (target instanceof HTMLInputElement) {
+    return target
+  }
+  const input = target.querySelector('input')
+  return input instanceof HTMLInputElement ? input : null
+}
+
+const extractNumericValue = (event: FocusEvent): number | null => {
+  const input = findInputElement(event)
+  if (!input) {
+    return null
+  }
+  const raw = input.value.trim()
+  if (!raw.length) {
+    return null
+  }
+  const value = Number(raw)
+  return Number.isFinite(value) ? value : null
+}
+
+const findClosestOption = (options: number[], value: number): number => {
+  if (!options.length) {
+    return value
+  }
+  const [firstOption] = options
+  let closest = firstOption ?? value
+  let smallestDiff = Math.abs(value - closest)
+  for (const option of options) {
+    const diff = Math.abs(value - option)
+    if (diff < smallestDiff) {
+      closest = option
+      smallestDiff = diff
+    }
+  }
+  return closest
+}
+
+const handleWeightInputBlur = (set: DraftSet, event: FocusEvent) => {
+  if (isReadOnly.value) {
+    return
+  }
+  const parsedValue = extractNumericValue(event)
+  if (parsedValue == null) {
+    return
+  }
+  const options = getWeightOptions(set.unit)
+  const normalized = options.includes(parsedValue) ? parsedValue : findClosestOption(options, parsedValue)
+  set.weight = normalized
+}
+
+const handleRepsInputBlur = (set: DraftSet, event: FocusEvent) => {
+  if (isReadOnly.value) {
+    return
+  }
+  const parsedValue = extractNumericValue(event)
+  if (parsedValue == null) {
+    return
+  }
+  const normalized = repOptions.includes(parsedValue)
+    ? parsedValue
+    : findClosestOption(repOptions, parsedValue)
+  set.reps = Math.max(1, Math.round(normalized))
 }
 
 const handleAddMealItem = (mealType: MealType) => {
@@ -527,6 +597,7 @@ watch(
     :width="sessionDialogWidth"
     :top="sessionDialogTop"
     :class="['session-editor-dialog', { 'is-compact': isCompactLayout }]"
+    :close-on-click-modal="false"
     @close="closeDialog"
   >
     <div class="dialog-content">
@@ -679,8 +750,11 @@ watch(
                                   v-model="row.weight"
                                   class="weight-select"
                                   filterable
+                                  :default-first-option="true"
+                                  :reserve-keyword="false"
                                   :disabled="isReadOnly"
                                   placeholder="選擇重量"
+                                  @blur="handleWeightInputBlur(row, $event)"
                                 >
                                   <el-option
                                     v-for="option in getWeightOptions(row.unit)"
@@ -702,8 +776,11 @@ watch(
                                 v-model="row.reps"
                                 class="reps-select"
                                 filterable
+                                :default-first-option="true"
+                                :reserve-keyword="false"
                                 :disabled="isReadOnly"
                                 placeholder="選擇次數"
+                                @blur="handleRepsInputBlur(row, $event)"
                               >
                                 <el-option
                                   v-for="option in repOptions"
