@@ -38,6 +38,7 @@ export interface WorkoutSession {
   date: string
   note?: string
   entries: WorkoutEntry[]
+  bodyWeightKg?: number
   createdAt: string
   updatedAt: string
   nutrition?: DailyNutrition
@@ -91,6 +92,7 @@ export interface DraftWorkoutSession {
   entries: DraftWorkoutEntry[]
   nutrition?: DraftDailyNutrition
   isCoachSession?: boolean
+  bodyWeightKg?: number | null
 }
 
 export interface CreateExercisePayload {

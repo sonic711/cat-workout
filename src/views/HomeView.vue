@@ -142,6 +142,29 @@ const {
 const isCoachDay = (dateKey: string) => Boolean(calendarSummaryByDate.value[dateKey]?.isCoachSession)
 const isCoachForSelectedDate = computed(() => Boolean(sessionForSelectedDate.value?.isCoachSession))
 
+const bodyWeightForSelectedDate = computed(() => {
+  const weight = sessionForSelectedDate.value?.bodyWeightKg
+  if (typeof weight !== 'number') {
+    return null
+  }
+  const normalized = Math.round(weight * 10) / 10
+  return normalized > 0 && normalized <= 400 ? normalized : null
+})
+
+const formattedBodyWeightForSelectedDate = computed(() => {
+  const weight = bodyWeightForSelectedDate.value
+  if (weight == null) {
+    return ''
+  }
+  return Number.isInteger(weight) ? weight.toFixed(0) : weight.toFixed(1)
+})
+
+const hasBodyWeightForSelectedDate = computed(() => bodyWeightForSelectedDate.value != null)
+const hasWaterForSelectedDate = computed(() => waterIntakeForSelectedDate.value > 0)
+const hasDailyStatsForSelectedDate = computed(
+  () => hasBodyWeightForSelectedDate.value || hasWaterForSelectedDate.value,
+)
+
 watch(
   () => sessionForSelectedDate.value?.id,
   () => {
@@ -289,6 +312,16 @@ onMounted(() => {
               <p v-if="sessionForSelectedDate.note" class="session-note">
                 {{ sessionForSelectedDate.note }}
               </p>
+              <div v-if="hasDailyStatsForSelectedDate" class="daily-stats">
+                <div v-if="hasBodyWeightForSelectedDate" class="stat-card stat-card--weight">
+                  <span class="stat-label">今日體重</span>
+                  <span class="stat-value">{{ formattedBodyWeightForSelectedDate }} kg</span>
+                </div>
+                <div v-if="hasWaterForSelectedDate" class="stat-card stat-card--water">
+                  <span class="stat-label">喝水量</span>
+                  <span class="stat-value">{{ waterIntakeForSelectedDate }} ml</span>
+                </div>
+              </div>
               <div v-if="sessionForSelectedDate.entries.length" class="entry-list">
                 <section
                   v-for="group in entryGroups"
@@ -380,10 +413,6 @@ onMounted(() => {
             <template v-if="sessionForSelectedDate">
               <el-divider content-position="left">每日飲食</el-divider>
               <div v-if="hasNutritionForSelectedDate" class="nutrition-summary">
-                <div class="water-summary">
-                  <span class="label">喝水量</span>
-                  <span class="value">{{ waterIntakeForSelectedDate }} ml</span>
-                </div>
                 <div class="meal-summary-grid">
                   <div
                     v-for="meal in mealsForSelectedDate"
@@ -763,23 +792,40 @@ onMounted(() => {
   margin-top: 1rem;
 }
 
-.water-summary {
+.daily-stats {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.stat-card {
+  flex: 1;
+  min-width: 180px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
   padding: 0.75rem 1rem;
-  border-radius: 8px;
-  background: linear-gradient(90deg, rgba(79, 70, 229, 0.12), rgba(59, 130, 246, 0.12));
+  border-radius: 10px;
+  background: linear-gradient(135deg, rgba(79, 70, 229, 0.12), rgba(56, 189, 248, 0.12));
+  border: 1px solid rgba(59, 130, 246, 0.18);
 }
 
-.water-summary .label {
-  font-weight: 600;
-  color: #312e81;
+.stat-card--weight {
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.12), rgba(59, 130, 246, 0.12));
+  border-color: rgba(16, 185, 129, 0.24);
 }
 
-.water-summary .value {
+.stat-label {
+  font-size: 0.85rem;
   font-weight: 600;
-  color: #1d4ed8;
+  color: #334155;
+}
+
+.stat-value {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: #1e3a8a;
 }
 
 .meal-summary-grid {

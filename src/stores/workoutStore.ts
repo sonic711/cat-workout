@@ -355,6 +355,16 @@ export const useWorkoutStore = defineStore('workout', () => {
     })
 
     const normalizedNutrition = normalizeDraftNutrition(draft.nutrition, existingSession?.nutrition)
+    const normalizedWeight = (() => {
+      if (typeof draft.bodyWeightKg !== 'number') {
+        return undefined
+      }
+      const weight = Number.isFinite(draft.bodyWeightKg) ? Number(draft.bodyWeightKg) : NaN
+      if (!Number.isFinite(weight) || weight <= 0 || weight > 400) {
+        return undefined
+      }
+      return Math.round(weight * 10) / 10
+    })()
 
     const session: WorkoutSession = {
       id: sessionId,
@@ -365,6 +375,7 @@ export const useWorkoutStore = defineStore('workout', () => {
       updatedAt: timestamp,
       nutrition: normalizedNutrition,
       isCoachSession: Boolean(draft.isCoachSession),
+      bodyWeightKg: normalizedWeight,
     }
 
     sessionsByDate.value[dateKey] = session

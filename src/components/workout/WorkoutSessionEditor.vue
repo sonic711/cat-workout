@@ -409,6 +409,14 @@ const validateDraft = () => {
     }
   }
 
+  if (draft.value.bodyWeightKg != null) {
+    const weight = Number(draft.value.bodyWeightKg)
+    if (!Number.isFinite(weight) || weight <= 0 || weight > 400) {
+      ElMessage.error('請輸入有效的體重（kg）')
+      return false
+    }
+  }
+
   if (draft.value.nutrition.waterIntakeMl < 0) {
     ElMessage.error('喝水量不可為負數')
     return false
@@ -538,6 +546,22 @@ watch(
           placeholder="訓練筆記"
           :disabled="isReadOnly"
         />
+        <div class="session-meta-row">
+          <div class="weight-input">
+            <label for="session-weight-input">今日體重 (kg)</label>
+            <el-input-number
+              id="session-weight-input"
+              v-model="draft.bodyWeightKg"
+              :min="0"
+              :max="400"
+              :step="0.1"
+              :precision="1"
+              controls-position="right"
+              :disabled="isReadOnly"
+              :value-on-clear="null"
+            />
+          </div>
+        </div>
         <div class="session-flags">
           <el-checkbox v-model="draft.isCoachSession" :disabled="isReadOnly">
             教練課
@@ -698,9 +722,6 @@ watch(
                           <el-table-column width="160" align="right">
                             <template #default="{ row, $index }">
                               <div class="table-actions">
-                                <el-button type="primary" link :disabled="isReadOnly" @click="handleAddSet(entry)">
-                                  新增組數
-                                </el-button>
                                 <el-button
                                   type="danger"
                                   link
@@ -876,6 +897,30 @@ watch(
 .session-date {
   font-weight: 600;
   color: #1f2933;
+}
+
+.session-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  align-items: center;
+}
+
+.weight-input {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  min-width: 160px;
+}
+
+.weight-input label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #4b5563;
+}
+
+.weight-input :deep(.el-input-number) {
+  width: 160px;
 }
 
 .session-flags {

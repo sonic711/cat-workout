@@ -134,6 +134,7 @@ const createSeedHydration = (): HydrationPayload => {
         createdAt: now,
         updatedAt: now,
         isCoachSession: true,
+        bodyWeightKg: 68.2,
       },
       {
         id: `session-${today}`,
@@ -160,6 +161,7 @@ const createSeedHydration = (): HydrationPayload => {
         createdAt: now,
         updatedAt: now,
         isCoachSession: false,
+        bodyWeightKg: 68.8,
       },
       {
         id: `session-${pullDay}`,
@@ -178,6 +180,7 @@ const createSeedHydration = (): HydrationPayload => {
         createdAt: now,
         updatedAt: now,
         isCoachSession: false,
+        bodyWeightKg: 68.5,
       },
     ],
   }

@@ -23,6 +23,7 @@ interface SessionRow {
   id: string
   date: string | Date
   note: string | null
+  bodyWeightKg: number | null
   waterMl: number | null
   isCoachSession: number | null
   createdAt: Date | string
@@ -105,6 +106,7 @@ interface WorkoutSession {
   date: string
   note?: string
   entries: WorkoutEntry[]
+  bodyWeightKg?: number
   createdAt: string
   updatedAt: string
   nutrition?: DailyNutrition
@@ -145,7 +147,7 @@ const resolveEnv = (): MysqlConfig => {
   }
 
   return {
-    host: process.env.MYSQL_HOST ?? '10.0.0.135',
+    host: process.env.MYSQL_HOST ?? '152.69.193.219',
     port: Number(process.env.MYSQL_PORT ?? '3306'),
     user: process.env.MYSQL_USER ?? 'user',
     password: process.env.MYSQL_PASSWORD ?? 'userpassword',
@@ -232,6 +234,7 @@ const ensureSchema = async () => {
         id VARCHAR(64) NOT NULL,
         date DATE NOT NULL,
         note TEXT NULL,
+        body_weight_kg DOUBLE NULL,
         water_ml INT UNSIGNED NOT NULL DEFAULT 0,
         is_coach_session TINYINT(1) NOT NULL DEFAULT 0,
         created_at DATETIME(6) NOT NULL,
@@ -241,7 +244,14 @@ const ensureSchema = async () => {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
     )
     await connection
-      .query('ALTER TABLE sessions ADD COLUMN water_ml INT UNSIGNED NOT NULL DEFAULT 0 AFTER note')
+      .query('ALTER TABLE sessions ADD COLUMN body_weight_kg DOUBLE NULL AFTER note')
+      .catch((error) => {
+        if (!isDuplicateColumnError(error)) {
+          throw error
+        }
+      })
+    await connection
+      .query('ALTER TABLE sessions ADD COLUMN water_ml INT UNSIGNED NOT NULL DEFAULT 0 AFTER body_weight_kg')
       .catch((error) => {
         if (!isDuplicateColumnError(error)) {
           throw error
@@ -354,15 +364,23 @@ const mapExerciseRow = (row: ExerciseRow): ExerciseDefinition => {
 
 const mapSessionRow = (
   row: SessionRow,
-): Omit<WorkoutSession, 'entries' | 'nutrition'> & { waterIntakeMl: number; isCoachSession: boolean } => ({
-  id: row.id,
-  date: normalizeDateFromDb(row.date, `session(${row.id}).date`),
-  note: row.note ?? undefined,
-  createdAt: normalizeTimestampFromDb(row.createdAt, `session(${row.id}).createdAt`),
-  updatedAt: normalizeTimestampFromDb(row.updatedAt, `session(${row.id}).updatedAt`),
-  waterIntakeMl: typeof row.waterMl === 'number' ? Number(row.waterMl) : 0,
-  isCoachSession: Boolean(row.isCoachSession),
-})
+): Omit<WorkoutSession, 'entries' | 'nutrition'> & { waterIntakeMl: number; isCoachSession: boolean } => {
+  const rawWeight = typeof row.bodyWeightKg === 'number' ? Number(row.bodyWeightKg) : NaN
+  const bodyWeightKg = Number.isFinite(rawWeight) && rawWeight > 0 && rawWeight <= 400
+    ? Math.round(rawWeight * 10) / 10
+    : undefined
+
+  return {
+    id: row.id,
+    date: normalizeDateFromDb(row.date, `session(${row.id}).date`),
+    note: row.note ?? undefined,
+    bodyWeightKg,
+    createdAt: normalizeTimestampFromDb(row.createdAt, `session(${row.id}).createdAt`),
+    updatedAt: normalizeTimestampFromDb(row.updatedAt, `session(${row.id}).updatedAt`),
+    waterIntakeMl: typeof row.waterMl === 'number' ? Number(row.waterMl) : 0,
+    isCoachSession: Boolean(row.isCoachSession),
+  }
+}
 
 const validateExercises = (payload: unknown): payload is ExerciseDefinition[] => {
   return Array.isArray(payload) && payload.every((item) => {
@@ -429,6 +447,15 @@ const validateSessions = (payload: unknown): payload is WorkoutSession[] => {
       return false
     }
 
+    if (session.bodyWeightKg != null) {
+      if (typeof session.bodyWeightKg !== 'number') {
+        return false
+      }
+      if (!Number.isFinite(session.bodyWeightKg) || session.bodyWeightKg <= 0 || session.bodyWeightKg > 400) {
+        return false
+      }
+    }
+
     if (session.isCoachSession != null && typeof session.isCoachSession !== 'boolean') {
       return false
     }
@@ -490,7 +517,7 @@ const buildHydration = async (tenantId: string): Promise<HydrationPayload> => {
       [tenantId],
     ),
     pool.query<SessionRow[]>(
-      'SELECT id, date, note, water_ml AS waterMl, is_coach_session AS isCoachSession, created_at AS createdAt, updated_at AS updatedAt FROM sessions WHERE tenant_id = ? ORDER BY date',
+      'SELECT id, date, note, body_weight_kg AS bodyWeightKg, water_ml AS waterMl, is_coach_session AS isCoachSession, created_at AS createdAt, updated_at AS updatedAt FROM sessions WHERE tenant_id = ? ORDER BY date',
       [tenantId],
     ),
     pool.query<SessionEntryRow[]>(
@@ -732,6 +759,7 @@ app.put('/api/sessions', async (req: Request, res: Response) => {
           session.id,
           prepareDateForDb(session.date, `session(${session.id}).date`),
           session.note ?? null,
+          session.bodyWeightKg ?? null,
           session.nutrition?.waterIntakeMl ?? 0,
           session.isCoachSession ? 1 : 0,
           prepareTimestampForDb(session.createdAt, `session(${session.id}).createdAt`),
@@ -796,7 +824,7 @@ app.put('/api/sessions', async (req: Request, res: Response) => {
       }
 
       await runBulkInsert(
-        'INSERT INTO sessions (tenant_id, id, date, note, water_ml, is_coach_session, created_at, updated_at)',
+        'INSERT INTO sessions (tenant_id, id, date, note, body_weight_kg, water_ml, is_coach_session, created_at, updated_at)',
         sessionValues,
       )
       await runBulkInsert(

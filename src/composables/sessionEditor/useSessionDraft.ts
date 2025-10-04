@@ -17,6 +17,7 @@ import type {
 export type SessionDraft = DraftWorkoutSession & {
   nutrition: DraftDailyNutrition
   isCoachSession: boolean
+  bodyWeightKg: number | null
 }
 
 const DEFAULT_CARDIO_DURATION = 30
@@ -116,6 +117,7 @@ export const useSessionDraft = ({ date, session, exercises, isActive }: UseSessi
     entries: [],
     nutrition: createEmptyNutritionDraft(),
     isCoachSession: false,
+    bodyWeightKg: null,
   })
 
   const isDraftActive = isActive ?? ref(true)
@@ -166,21 +168,22 @@ export const useSessionDraft = ({ date, session, exercises, isActive }: UseSessi
 
   const hydrateDraft = (source: WorkoutSession | null) => {
     if (!source) {
-      draft.value = {
-        date: date.value,
-        note: '',
-        entries: [],
-        nutrition: createEmptyNutritionDraft(),
-        isCoachSession: false,
-      }
-      return
-    }
-
     draft.value = {
-      id: source.id,
-      date: source.date,
-      note: source.note ?? '',
-      entries: source.entries.map((entry) => ({
+      date: date.value,
+      note: '',
+      entries: [],
+      nutrition: createEmptyNutritionDraft(),
+      isCoachSession: false,
+      bodyWeightKg: null,
+    }
+    return
+  }
+
+  draft.value = {
+    id: source.id,
+    date: source.date,
+    note: source.note ?? '',
+    entries: source.entries.map((entry) => ({
         id: entry.id,
         draftKey: entry.id ?? createDraftKey(),
         exerciseId: entry.exerciseId,
@@ -212,6 +215,7 @@ export const useSessionDraft = ({ date, session, exercises, isActive }: UseSessi
         return nutritionDraft
       })(),
       isCoachSession: Boolean(source.isCoachSession),
+      bodyWeightKg: typeof source.bodyWeightKg === 'number' ? source.bodyWeightKg : null,
     }
 
     draft.value.entries.forEach((entry) => {
@@ -331,6 +335,16 @@ export const useSessionDraft = ({ date, session, exercises, isActive }: UseSessi
       }),
     },
     isCoachSession: draft.value.isCoachSession,
+    bodyWeightKg: (() => {
+      if (typeof draft.value.bodyWeightKg !== 'number') {
+        return undefined
+      }
+      const weight = Number(draft.value.bodyWeightKg)
+      if (!Number.isFinite(weight) || weight <= 0 || weight > 400) {
+        return undefined
+      }
+      return Math.round(weight * 10) / 10
+    })(),
   })
 
   // Ensure each entry stays aligned with the latest exercise metadata (e.g. category changes).
