@@ -59,6 +59,7 @@
 * 新增 `createMysqlPersistenceService`，以 fetch 串接 `/api/*` 端點並依登入帳號帶上 `x-storage-key` header。
 * `persistenceProvider` 預設注入 MySQL persistence（失敗時退回 demo service）。
 * 新增 `WorkoutSessionEditor` 對話框，支援建立 / 編輯 / 刪除指定日期的訓練紀錄，含項目、組數與 inline 新增動作。
+* `WorkoutSessionEditor` 新增組數時會自動沿用上一組的重量 / 單位 / 次數 / 備註，且新建組數預設使用磅（lb）單位，縮短重複輸入時間。
 * 引入 `useResponsiveDialog` hook，讓訓練紀錄編輯與動作管理彈窗在手機端自動調整寬度、頂距與排版，提升行動裝置的可用性。
 * 首頁詳情面板加入「管理訓練紀錄」入口，無紀錄時可直接建立新資料。
 * 建置 `authStore` 與登入面板，支援帳號 / 密碼驗證；僅輸入帳號為唯讀模式，帳號密碼皆正確（admin/admin、sean/sean）可進入對應帳號的編輯模式。

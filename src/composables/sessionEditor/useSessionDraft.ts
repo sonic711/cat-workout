@@ -44,7 +44,7 @@ const mealLabels: Record<MealType, string> = {
 
 const createEmptySet = (): DraftWorkoutSet => ({
   weight: 0,
-  unit: 'kg',
+  unit: 'lb',
   reps: 0,
   note: '',
 })
@@ -240,6 +240,20 @@ export const useSessionDraft = ({ date, session, exercises, isActive }: UseSessi
     if (isCardioEntry(entry)) {
       return
     }
+
+    if (entry.sets.length) {
+      const lastSet = entry.sets[entry.sets.length - 1]
+      if (lastSet) {
+        entry.sets.push({
+          weight: lastSet.weight,
+          unit: lastSet.unit,
+          reps: typeof lastSet.reps === 'number' ? lastSet.reps : 0,
+          note: lastSet.note ?? '',
+        })
+        return
+      }
+    }
+
     entry.sets.push(createEmptySet())
   }
 
