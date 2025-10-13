@@ -78,10 +78,13 @@
 * REST API 與持久層擴充 `nutrition` 與 `isCoachSession` 欄位，包含 MySQL schema、hydrate/save 流程與 demo service，同步支援完整資料往返。
 * 建立 Vitest 測試環境（`vitest.config.ts`、`tests/setup.ts`），新增 `useResponsiveDialog` 與 `useHomeCalendar` 的單元測試範例，相關說明整理於 `test.md`。
 * 訓練動作改為所有會員共用的全域資料表，API 新增 `POST /api/exercises`、`PUT /api/exercises/:id`、`DELETE /api/exercises/:id`，並在 schema 初始化時自動合併舊有重複項目，確保「名稱 + 分類」唯一。
+* 補上首頁對話框守門與 session 編輯資料流的單元測試（`useHomeDialogs`、`useSessionDraft`），涵蓋唯讀權限提示、缺水時自動 hydrate、卡路里草稿序列化、有氧切換預設值，以及移除最後一組時的保留機制。
+* 擴充 `useHomeCalendar` 測試案例，驗證切換日期後的詳情捲動與教練課旗標的回傳，確保月曆互動一致性。
+* 新增 `useExerciseDialog` 測試，確認唯讀模式下無法開啟彈窗、切換分類時自動清空部位，以及重設表單會回到預設狀態。
 
 **下一步 TODO（優先順序）：**
 
-1. **補齊單元測試（最高優先）**：補強日曆彈窗與 session 編輯流程的單元測試，確保資料流與 UI 行為穩定。
+1. **補齊單元測試（最高優先）**：已新增 `useHomeDialogs`、`useSessionDraft`、`useExerciseDialog` 與 `useHomeCalendar` 的關鍵測試，下一步仍需針對 `WorkoutSessionEditor` 元件互動（新增/刪除項目、唯讀提示、高度/寬度調整）補上元件層級的 E2E-like 測試。
 2. 強化訓練紀錄編輯體驗（例如快速新增組數、動作搜尋、複製既有紀錄等）。
 3. 擴充錯誤處理與使用者提示（例如 localStorage 空間不足或初始化失敗時的 fallback 流程）。
 4. 規劃資料匯入 / 匯出或同步機制，讓使用者可備份或跨裝置轉移紀錄。

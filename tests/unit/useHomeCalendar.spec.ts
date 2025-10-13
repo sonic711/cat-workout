@@ -73,6 +73,46 @@ describe('useHomeCalendar', () => {
     expect(scrollSpy).toHaveBeenCalledTimes(1)
   })
 
+  it('scrolls detail section after selecting a different date', async () => {
+    const initialKey = '2024-12-01'
+    const targetKey = '2024-12-05'
+    const { calendar } = createCalendar()
+
+    calendar.selectedDate.value = new Date(`${initialKey}T00:00:00`)
+
+    const scrollSpy = vi.fn()
+    calendar.detailSectionRef.value = {
+      scrollIntoView: scrollSpy,
+    } as unknown as HTMLElement
+
+    calendar.handleCalendarDateClick(targetKey)
+    calendar.selectedDate.value = new Date(`${targetKey}T00:00:00`)
+
+    await nextTick()
+    await nextTick()
+
+    expect(calendar.selectedDateKey.value).toBe(targetKey)
+    expect(scrollSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('surfaced summary retains coach session flag for the selected date', async () => {
+    const targetKey = '2024-12-09'
+    const { calendar, calendarSummaryByDate } = createCalendar()
+
+    calendarSummaryByDate.value[targetKey] = {
+      date: targetKey,
+      bodyParts: ['胸'],
+      totalCalories: 500,
+      isCoachSession: true,
+      hasSession: true,
+    } as CalendarDaySummary
+
+    calendar.selectedDate.value = new Date(`${targetKey}T00:00:00`)
+    await nextTick()
+
+    expect(calendar.selectedSummary.value?.isCoachSession).toBe(true)
+  })
+
   it('hydrates from persistence and resets date', async () => {
     const { calendar, hydrateFromPersistence } = createCalendar()
 
