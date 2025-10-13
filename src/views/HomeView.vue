@@ -2,6 +2,7 @@
 import { computed, onMounted, reactive, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { CaretBottom, CaretRight, Timer } from '@element-plus/icons-vue'
+import { RouterLink } from 'vue-router'
 
 import WorkoutSessionEditor from '@/components/workout/WorkoutSessionEditor.vue'
 import ExerciseManager from '@/components/workout/ExerciseManager.vue'
@@ -184,6 +185,11 @@ onMounted(() => {
     <el-header :class="['home-header', { 'home-header--compact': authStore.isLoggedIn }]">
       <h1>健身日誌月曆</h1>
       <p>快速概覽每一天的訓練安排，並為選定日期管理日誌內容。</p>
+      <div class="home-header__links">
+        <RouterLink to="/reports">
+          <el-button type="primary" plain>查看報表</el-button>
+        </RouterLink>
+      </div>
       <div :class="['auth-panel', { 'auth-panel--compact': authStore.isLoggedIn }]">
         <template v-if="authStore.isLoggedIn">
           <div class="auth-status">
@@ -497,6 +503,20 @@ onMounted(() => {
 
 .home-header--compact h1 {
   font-size: clamp(1.4rem, 1.6vw + 1rem, 1.9rem);
+}
+
+.home-header__links {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.home-header__links .el-button {
+  font-weight: 600;
+}
+
+.home-header--compact .home-header__links {
+  align-self: flex-start;
 }
 
 .auth-panel {
