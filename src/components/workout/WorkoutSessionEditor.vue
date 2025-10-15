@@ -119,6 +119,80 @@ const exerciseDialogWidth = computed(() => {
 
 const exerciseDialogTop = computed(() => (isCompactLayout.value ? '8vh' : '15vh'))
 
+type ExerciseOptionGroup = {
+  id: string
+  label: string
+  options: ExerciseDefinition[]
+}
+
+const collator = new Intl.Collator('zh-Hant', {
+  sensitivity: 'base',
+  numeric: true,
+})
+
+const UNASSIGNED_BODY_PART_LABEL = '未分類'
+
+const exerciseOptionGroups = computed<ExerciseOptionGroup[]>(() => {
+  const grouped: ExerciseOptionGroup[] = []
+  const strengthByBodyPart = new Map<string, ExerciseDefinition[]>()
+  const cardioExercises: ExerciseDefinition[] = []
+
+  const toBodyPartKey = (bodyPart?: string | null) => {
+    const trimmed = bodyPart?.trim()
+    return trimmed && trimmed.length ? trimmed : UNASSIGNED_BODY_PART_LABEL
+  }
+
+  for (const exercise of exerciseOptions.value) {
+    if (exercise.category === 'cardio') {
+      cardioExercises.push(exercise)
+      continue
+    }
+    const key = toBodyPartKey(exercise.bodyPart)
+    const bucket = strengthByBodyPart.get(key)
+    if (bucket) {
+      bucket.push(exercise)
+    } else {
+      strengthByBodyPart.set(key, [exercise])
+    }
+  }
+
+  const compareStrings = (a: string, b: string) => collator.compare(a, b)
+
+  const strengthKeys = Array.from(strengthByBodyPart.keys()).sort((a, b) => {
+    if (a === UNASSIGNED_BODY_PART_LABEL) {
+      return b === UNASSIGNED_BODY_PART_LABEL ? 0 : 1
+    }
+    if (b === UNASSIGNED_BODY_PART_LABEL) {
+      return -1
+    }
+    return compareStrings(a, b)
+  })
+
+  for (const key of strengthKeys) {
+    const exercises = strengthByBodyPart.get(key)
+    if (!exercises?.length) {
+      continue
+    }
+    const sortedExercises = [...exercises].sort((a, b) => compareStrings(a.name, b.name))
+    grouped.push({
+      id: `body-part:${key}`,
+      label: key,
+      options: sortedExercises,
+    })
+  }
+
+  if (cardioExercises.length) {
+    const sortedCardio = [...cardioExercises].sort((a, b) => compareStrings(a.name, b.name))
+    grouped.push({
+      id: 'category:cardio',
+      label: CATEGORY_LABELS.cardio,
+      options: sortedCardio,
+    })
+  }
+
+  return grouped
+})
+
 const closeDialog = () => {
   emit('update:modelValue', false)
 }
@@ -702,12 +776,18 @@ watch(
                             :disabled="isReadOnly"
                             @change="handleEntryExerciseChange(entry)"
                           >
-                            <el-option
-                              v-for="exercise in exerciseOptions"
-                              :key="exercise.id"
-                              :label="formatExerciseOptionLabel(exercise)"
-                              :value="exercise.id"
-                            />
+                            <el-option-group
+                              v-for="group in exerciseOptionGroups"
+                              :key="group.id"
+                              :label="group.label"
+                            >
+                              <el-option
+                                v-for="exercise in group.options"
+                                :key="exercise.id"
+                                :label="formatExerciseOptionLabel(exercise)"
+                                :value="exercise.id"
+                              />
+                            </el-option-group>
                           </el-select>
                           <el-button type="primary" link :disabled="isReadOnly" @click="handleOpenExerciseDialog(entry)">
                             新增動作
