@@ -249,7 +249,7 @@ onMounted(() => {
     <el-main class="home-main">
       <div class="home-content">
         <el-row :gutter="20">
-          <el-col :xs="24" :lg="14">
+          <el-col :xs="24" :md="24" :lg="16" :xl="16">
             <el-card class="calendar-card">
             <template #header>
               <div class="card-header">
@@ -280,7 +280,7 @@ onMounted(() => {
             </el-calendar>
           </el-card>
         </el-col>
-        <el-col :xs="24" :lg="10">
+        <el-col :xs="24" :md="24" :lg="8" :xl="8">
           <div ref="detailSectionRef" class="detail-section">
             <el-card class="detail-card">
             <template #header>
@@ -599,7 +599,7 @@ onMounted(() => {
 
 .home-content {
   width: 100%;
-  max-width: 1200px;
+  max-width: 1320px;
 }
 
 .detail-section {
